@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { toggleSubtask, deleteSubtask } from '@/lib/sheets'
+import { updateSubtask, deleteSubtask, Priority } from '@/lib/sheets'
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const { done, note } = await req.json()
-    await toggleSubtask(params.id, done, note)
+    const body = await req.json()
+    await updateSubtask(params.id, {
+      ...(body.done     !== undefined && { done:     body.done }),
+      ...(body.note     !== undefined && { note:     body.note }),
+      ...(body.priority !== undefined && { priority: body.priority as Priority }),
+    })
     return NextResponse.json({ ok: true })
   } catch (e) {
     console.error('PATCH /api/subtasks error:', e)

@@ -64,6 +64,7 @@ export default function AppPage() {
   const [stateMenuTaskId, setStateMenuTaskId]   = useState<string | null>(null)
   const [priorityMenuTaskId, setPriorityMenuTaskId] = useState<string | null>(null)
   const [editingNoteFor, setEditingNoteFor] = useState<string | null>(null)
+  const [subtaskPriorityMenuId, setSubtaskPriorityMenuId] = useState<string | null>(null)
   const [flashingTask, setFlashingTask]     = useState<string | null>(null)
   const [searchQuery, setSearchQuery]       = useState('')
   const [showSearch, setShowSearch]         = useState(false)
@@ -168,7 +169,7 @@ export default function AppPage() {
     if (newSubtaskRef.current) newSubtaskRef.current.value = ''
     setAddingSubtaskFor(null)
     const tempId = `temp-${Date.now()}`
-    setSubtasks(prev => [...prev, { id: tempId, taskId, title, done: false, note: '', createdAt: '' }])
+    setSubtasks(prev => [...prev, { id: tempId, taskId, title, done: false, note: '', createdAt: '', priority: 'None' }])
     try {
       const res = await fetch('/api/subtasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId, title }) })
       const subtask: Subtask = await res.json()
@@ -176,17 +177,12 @@ export default function AppPage() {
     } catch { setSubtasks(prev => prev.filter(s => s.id !== tempId)) }
   }
 
-  async function toggleSubtask(id: string, done: boolean) {
+  async function patchSubtask(id: string, fields: Partial<{ done: boolean; note: string; priority: Priority }>) {
     const sub = subtasks.find(s => s.id === id)
-    if (sub && done) { setFlashingTask(sub.taskId); setTimeout(() => setFlashingTask(null), 1000) }
-    setSubtasks(prev => prev.map(s => s.id === id ? { ...s, done } : s))
-    await fetch(`/api/subtasks/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done }) })
-  }
-
-  async function saveNote(id: string, note: string) {
-    setSubtasks(prev => prev.map(s => s.id === id ? { ...s, note } : s))
-    const sub = subtasks.find(s => s.id === id)
-    await fetch(`/api/subtasks/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done: sub?.done ?? false, note }) })
+    if (fields.done && sub) { setFlashingTask(sub.taskId); setTimeout(() => setFlashingTask(null), 1000) }
+    setSubtasks(prev => prev.map(s => s.id === id ? { ...s, ...fields } : s))
+    setSubtaskPriorityMenuId(null)
+    await fetch(`/api/subtasks/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(fields) })
   }
 
   async function removeSubtask(id: string) {
@@ -379,28 +375,65 @@ export default function AppPage() {
             <div className="px-4 pb-2 pt-1">
               {taskSubtasks.map(sub => (
                 <div key={sub.id} className="border-b border-gray-800/40 last:border-0">
-                  <div className="flex items-center gap-3 py-2.5">
-                    <button onClick={() => toggleSubtask(sub.id, !sub.done)}
+                  <div className="flex items-center gap-2 py-2.5">
+                    {/* Checkbox */}
+                    <button onClick={() => patchSubtask(sub.id, { done: !sub.done })}
                       className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center shrink-0 transition-all ${sub.done ? 'bg-green-600 border-green-600' : 'border-gray-700 hover:border-gray-500'}`}>
                       {sub.done && <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
                     </button>
-                    <span className={`flex-1 text-sm ${sub.done ? 'text-gray-600 line-through' : 'text-gray-200'}`}>{sub.title}</span>
+
+                    {/* Title */}
+                    <span className={`flex-1 text-sm min-w-0 ${sub.done ? 'text-gray-600 line-through' : 'text-gray-200'}`}>{sub.title}</span>
+
+                    {/* Priority selector */}
+                    <div className="relative shrink-0">
+                      <button
+                        onClick={() => setSubtaskPriorityMenuId(subtaskPriorityMenuId === sub.id ? null : sub.id)}
+                        className={`w-7 h-7 flex items-center justify-center rounded-lg transition ${
+                          sub.priority !== 'None'
+                            ? `${PRIORITY_META[sub.priority].color} border`
+                            : 'text-gray-700 hover:text-gray-500 hover:bg-gray-800'
+                        }`}
+                        title="Важность"
+                      >
+                        {sub.priority !== 'None'
+                          ? <span className={`w-2 h-2 rounded-full ${PRIORITY_META[sub.priority].dot}`} />
+                          : <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3 4h13M3 8h9m-9 4h9m5-4v12m0 0l-4-4m4 4l4-4" /></svg>
+                        }
+                      </button>
+                      {subtaskPriorityMenuId === sub.id && (
+                        <div className="absolute right-0 top-8 z-50 bg-gray-900 border border-gray-700/80 rounded-xl shadow-2xl p-1 min-w-[150px]">
+                          {PRIORITIES.map(p => (
+                            <button key={p} onClick={() => patchSubtask(sub.id, { priority: p })}
+                              className={`w-full text-left text-xs px-3 py-2 rounded-lg flex items-center gap-2 transition ${p === sub.priority ? 'opacity-40' : 'hover:bg-gray-800'}`}>
+                              <span className={`w-2 h-2 rounded-full shrink-0 ${PRIORITY_META[p].dot}`} />
+                              {PRIORITY_META[p].label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Note */}
                     <button onClick={() => setEditingNoteFor(editingNoteFor === sub.id ? null : sub.id)}
-                      className={`w-8 h-8 flex items-center justify-center rounded-xl transition ${sub.note ? 'text-indigo-400 bg-indigo-500/10' : 'text-gray-700 hover:text-gray-500 hover:bg-gray-800'}`}>
-                      <svg className="w-4 h-4" fill={sub.note ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                      className={`w-7 h-7 flex items-center justify-center rounded-lg transition shrink-0 ${sub.note ? 'text-indigo-400 bg-indigo-500/10' : 'text-gray-700 hover:text-gray-500 hover:bg-gray-800'}`}>
+                      <svg className="w-3.5 h-3.5" fill={sub.note ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
                       </svg>
                     </button>
+
+                    {/* Delete */}
                     <button onClick={() => removeSubtask(sub.id)}
-                      className="w-8 h-8 flex items-center justify-center rounded-xl text-gray-700 hover:text-red-400 hover:bg-red-400/10 transition">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                      className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-700 hover:text-red-400 hover:bg-red-400/10 transition shrink-0">
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
                     </button>
                   </div>
+
                   {(editingNoteFor === sub.id || sub.note) && (
-                    <div className="ml-9 mb-2">
+                    <div className="ml-8 mb-2">
                       {editingNoteFor === sub.id
                         ? <textarea autoFocus defaultValue={sub.note}
-                            onBlur={e => { saveNote(sub.id, e.target.value); setEditingNoteFor(null) }}
+                            onBlur={e => { patchSubtask(sub.id, { note: e.target.value }); setEditingNoteFor(null) }}
                             onKeyDown={e => { if (e.key === 'Escape') setEditingNoteFor(null) }}
                             placeholder="Комментарий к выполнению..." rows={2}
                             className="w-full bg-gray-800/80 border border-gray-700/50 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-500/50 resize-none placeholder-gray-600" />
@@ -720,8 +753,8 @@ export default function AppPage() {
           </div>
         )}
       </main>
-      {(stateMenuTaskId || priorityMenuTaskId) && (
-        <div className="fixed inset-0 z-40" onClick={() => { setStateMenuTaskId(null); setPriorityMenuTaskId(null) }} />
+      {(stateMenuTaskId || priorityMenuTaskId || subtaskPriorityMenuId) && (
+        <div className="fixed inset-0 z-40" onClick={() => { setStateMenuTaskId(null); setPriorityMenuTaskId(null); setSubtaskPriorityMenuId(null) }} />
       )}
     </div>
   )

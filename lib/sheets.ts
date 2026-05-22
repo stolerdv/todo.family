@@ -238,20 +238,22 @@ export interface Subtask {
   done: boolean
   note: string
   createdAt: string
+  priority: Priority
 }
 
 export async function getSubtasks(taskId?: string): Promise<Subtask[]> {
   const res = await sheets().spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: 'Subtasks!A2:F',
+    range: 'Subtasks!A2:G',
   })
-  const rows = (res.data.values ?? []).map(([id, tId, title, done, createdAt, note]) => ({
+  const rows = (res.data.values ?? []).map(([id, tId, title, done, createdAt, note, priority]) => ({
     id,
     taskId: tId,
     title,
     done: done === 'true',
     note: note ?? '',
     createdAt,
+    priority: (priority || 'None') as Priority,
   }))
   return taskId ? rows.filter(s => s.taskId === taskId) : rows
 }
@@ -261,22 +263,28 @@ export async function createSubtask(taskId: string, title: string): Promise<Subt
   const createdAt = new Date().toISOString()
   await sheets().spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
-    range: 'Subtasks!A:F',
+    range: 'Subtasks!A:G',
     valueInputOption: 'RAW',
-    requestBody: { values: [[id, taskId, title, 'false', createdAt, '']] },
+    requestBody: { values: [[id, taskId, title, 'false', createdAt, '', 'None']] },
   })
-  return { id, taskId, title, done: false, note: '', createdAt }
+  return { id, taskId, title, done: false, note: '', createdAt, priority: 'None' }
 }
 
-export async function toggleSubtask(id: string, done: boolean, note?: string): Promise<void> {
-  const rows = await getRawRows('Subtasks!A:F')
+export async function updateSubtask(id: string, fields: { done?: boolean; note?: string; priority?: Priority }): Promise<void> {
+  const rows = await getRawRows('Subtasks!A:G')
   const rowIndex = rows.findIndex(r => r[0] === id)
   if (rowIndex === -1) throw new Error('Subtask not found')
+  const row = rows[rowIndex]
   await sheets().spreadsheets.values.update({
     spreadsheetId: SHEET_ID,
-    range: `Subtasks!D${rowIndex + 2}:F${rowIndex + 2}`,
+    range: `Subtasks!D${rowIndex + 2}:G${rowIndex + 2}`,
     valueInputOption: 'RAW',
-    requestBody: { values: [[String(done), rows[rowIndex][4] ?? '', note ?? rows[rowIndex][5] ?? '']] },
+    requestBody: { values: [[
+      String(fields.done ?? row[3] === 'true'),
+      row[4] ?? '',
+      fields.note     ?? row[5] ?? '',
+      fields.priority ?? row[6] ?? 'None',
+    ]] },
   })
 }
 
