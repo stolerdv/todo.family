@@ -177,6 +177,7 @@ export default function AppPage() {
 
   const sidebarContent = (
     <>
+      <div className="pt-safe" />
       <div className="p-4 border-b border-gray-800">
         <div className="flex items-center justify-between">
           <span className="font-semibold text-sm">Todo Family</span>
@@ -226,6 +227,9 @@ export default function AppPage() {
 
   const mainContent = (
     <>
+      {/* Safe area top spacer — mobile only */}
+      <div className="pt-safe md:hidden bg-gray-950" />
+
       {/* Header */}
       <div className="px-4 md:px-6 py-3 md:py-4 border-b border-gray-800 flex items-center gap-3 shrink-0">
         {/* Hamburger — mobile only */}
@@ -421,8 +425,8 @@ export default function AppPage() {
           >+ Добавить этап</button>
         )}
 
-        {/* Bottom padding for mobile */}
-        <div className="h-4" />
+        {/* Bottom safe area for home indicator */}
+        <div className="pb-safe" />
       </div>
     </>
   )
