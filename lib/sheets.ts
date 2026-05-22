@@ -10,6 +10,8 @@ export type TaskState =
   | 'Deferred'
   | 'Delegated'
 
+export type Priority = 'Critical' | 'High' | 'Medium' | 'Low' | 'None'
+
 export interface User {
   id: string
   username: string
@@ -22,6 +24,16 @@ export interface Section {
   name: string
   createdAt: string
   userId: string
+  archived: boolean
+}
+
+export interface Comment {
+  id: string
+  taskId: string
+  userId: string
+  username: string
+  text: string
+  createdAt: string
 }
 
 export interface Task {
@@ -30,6 +42,8 @@ export interface Task {
   title: string
   state: TaskState
   createdAt: string
+  priority: Priority
+  dueDate: string
 }
 
 function getAuth() {
@@ -80,9 +94,11 @@ export async function createUser(username: string, passwordHash: string): Promis
 export async function getSections(userId?: string): Promise<Section[]> {
   const res = await sheets().spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: 'Sections!A2:D',
+    range: 'Sections!A2:E',
   })
-  const all = (res.data.values ?? []).map(([id, name, createdAt, uid]) => ({ id, name, createdAt, userId: uid ?? '' }))
+  const all = (res.data.values ?? []).map(([id, name, createdAt, uid, archived]) => ({
+    id, name, createdAt, userId: uid ?? '', archived: archived === 'true',
+  }))
   return userId ? all.filter(s => s.userId === userId) : all
 }
 
@@ -91,11 +107,23 @@ export async function createSection(name: string, userId: string): Promise<Secti
   const createdAt = new Date().toISOString()
   await sheets().spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
-    range: 'Sections!A:D',
+    range: 'Sections!A:E',
     valueInputOption: 'RAW',
-    requestBody: { values: [[id, name, createdAt, userId]] },
+    requestBody: { values: [[id, name, createdAt, userId, 'false']] },
   })
-  return { id, name, createdAt, userId }
+  return { id, name, createdAt, userId, archived: false }
+}
+
+export async function archiveSection(id: string, archived: boolean): Promise<void> {
+  const rows = await getRawRows('Sections!A:E')
+  const rowIndex = rows.findIndex(r => r[0] === id)
+  if (rowIndex === -1) return
+  await sheets().spreadsheets.values.update({
+    spreadsheetId: SHEET_ID,
+    range: `Sections!E${rowIndex + 2}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[String(archived)]] },
+  })
 }
 
 export async function deleteSection(id: string): Promise<void> {
@@ -117,14 +145,14 @@ export async function deleteSection(id: string): Promise<void> {
 export async function getTasks(sectionId?: string): Promise<Task[]> {
   const res = await sheets().spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: 'Tasks!A2:E',
+    range: 'Tasks!A2:G',
   })
-  const rows = (res.data.values ?? []).map(([id, sId, title, state, createdAt]) => ({
-    id,
-    sectionId: sId,
-    title,
-    state: state as TaskState,
-    createdAt,
+  const rows = (res.data.values ?? []).map(([id, sId, title, state, createdAt, priority, dueDate]) => ({
+    id, sectionId: sId, title,
+    state: (state || 'Todo') as TaskState,
+    createdAt: createdAt ?? '',
+    priority: (priority || 'None') as Priority,
+    dueDate: dueDate ?? '',
   }))
   return sectionId ? rows.filter(t => t.sectionId === sectionId) : rows
 }
@@ -132,45 +160,73 @@ export async function getTasks(sectionId?: string): Promise<Task[]> {
 export async function createTask(sectionId: string, title: string): Promise<Task> {
   const id = crypto.randomUUID()
   const createdAt = new Date().toISOString()
-  const state: TaskState = 'Todo'
   await sheets().spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
-    range: 'Tasks!A:E',
+    range: 'Tasks!A:G',
     valueInputOption: 'RAW',
-    requestBody: { values: [[id, sectionId, title, state, createdAt]] },
+    requestBody: { values: [[id, sectionId, title, 'Todo', createdAt, 'None', '']] },
   })
-  return { id, sectionId, title, state, createdAt }
+  return { id, sectionId, title, state: 'Todo', createdAt, priority: 'None', dueDate: '' }
 }
 
-export async function updateTaskState(id: string, state: TaskState): Promise<void> {
-  const rows = await getRawRows('Tasks!A:E')
+export async function updateTask(id: string, fields: Partial<{ state: TaskState; title: string; priority: Priority; dueDate: string }>): Promise<void> {
+  const rows = await getRawRows('Tasks!A:G')
   const rowIndex = rows.findIndex(r => r[0] === id)
   if (rowIndex === -1) throw new Error('Task not found')
+  const row = rows[rowIndex]
+  const updated = [
+    row[0],
+    row[1],
+    fields.title   ?? row[2] ?? '',
+    fields.state   ?? row[3] ?? 'Todo',
+    row[4],
+    fields.priority ?? row[5] ?? 'None',
+    fields.dueDate  ?? row[6] ?? '',
+  ]
   await sheets().spreadsheets.values.update({
     spreadsheetId: SHEET_ID,
-    range: `Tasks!D${rowIndex + 2}`,
+    range: `Tasks!A${rowIndex + 2}:G${rowIndex + 2}`,
     valueInputOption: 'RAW',
-    requestBody: { values: [[state]] },
-  })
-}
-
-export async function updateTaskTitle(id: string, title: string): Promise<void> {
-  const rows = await getRawRows('Tasks!A:E')
-  const rowIndex = rows.findIndex(r => r[0] === id)
-  if (rowIndex === -1) throw new Error('Task not found')
-  await sheets().spreadsheets.values.update({
-    spreadsheetId: SHEET_ID,
-    range: `Tasks!C${rowIndex + 2}`,
-    valueInputOption: 'RAW',
-    requestBody: { values: [[title]] },
+    requestBody: { values: [updated] },
   })
 }
 
 export async function deleteTask(id: string): Promise<void> {
-  const rows = await getRawRows('Tasks!A:E')
+  const rows = await getRawRows('Tasks!A:G')
   const rowIndex = rows.findIndex(r => r[0] === id)
   if (rowIndex === -1) return
   await deleteRow('Tasks', rowIndex + 2)
+}
+
+// ── Comments ──────────────────────────────────────────────────────────────────
+
+export async function getComments(taskId: string): Promise<Comment[]> {
+  const res = await sheets().spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: 'Comments!A2:F',
+  })
+  return (res.data.values ?? [])
+    .map(([id, tId, userId, username, text, createdAt]) => ({ id, taskId: tId, userId, username, text, createdAt }))
+    .filter(c => c.taskId === taskId)
+}
+
+export async function createComment(taskId: string, userId: string, username: string, text: string): Promise<Comment> {
+  const id = crypto.randomUUID()
+  const createdAt = new Date().toISOString()
+  await sheets().spreadsheets.values.append({
+    spreadsheetId: SHEET_ID,
+    range: 'Comments!A:F',
+    valueInputOption: 'RAW',
+    requestBody: { values: [[id, taskId, userId, username, text, createdAt]] },
+  })
+  return { id, taskId, userId, username, text, createdAt }
+}
+
+export async function deleteComment(id: string): Promise<void> {
+  const rows = await getRawRows('Comments!A:F')
+  const rowIndex = rows.findIndex(r => r[0] === id)
+  if (rowIndex === -1) return
+  await deleteRow('Comments', rowIndex + 2)
 }
 
 // ── Subtasks ──────────────────────────────────────────────────────────────────
