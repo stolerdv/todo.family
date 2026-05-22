@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
 import SplashScreen from '@/components/SplashScreen'
+import RegisterSW from '@/components/RegisterSW'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -37,6 +38,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="apple-touch-icon" href="/icon" />
       </head>
       <body className={`${inter.className} bg-gray-950 text-gray-100 min-h-screen overscroll-none`}>
+        <RegisterSW />
         <SplashScreen />
         {children}
       </body>
