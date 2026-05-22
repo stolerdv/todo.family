@@ -127,17 +127,24 @@ export async function archiveSection(id: string, archived: boolean): Promise<voi
 }
 
 export async function deleteSection(id: string): Promise<void> {
-  const rows = await getRawRows('Sections!A:C')
+  const rows = await getRawRows('Sections!A:E')
   const rowIndex = rows.findIndex(r => r[0] === id)
   if (rowIndex === -1) return
   await deleteRow('Sections', rowIndex + 2)
-  // also delete tasks belonging to this section
-  const taskRows = await getRawRows('Tasks!A:E')
-  const taskIndices = taskRows
-    .map((r, i) => (r[1] === id ? i + 2 : -1))
-    .filter(i => i !== -1)
-    .reverse()
-  for (const idx of taskIndices) await deleteRow('Tasks', idx)
+  // find task ids in this section
+  const taskRows = await getRawRows('Tasks!A:G')
+  const taskIds = taskRows.filter(r => r[1] === id).map(r => r[0])
+  // delete tasks (reverse order to keep indices valid)
+  for (const idx of taskRows.map((r, i) => r[1] === id ? i + 2 : -1).filter(i => i !== -1).reverse())
+    await deleteRow('Tasks', idx)
+  // cascade: delete subtasks for those tasks
+  const subtaskRows = await getRawRows('Subtasks!A:G')
+  for (const idx of subtaskRows.map((r, i) => taskIds.includes(r[1]) ? i + 2 : -1).filter(i => i !== -1).reverse())
+    await deleteRow('Subtasks', idx)
+  // cascade: delete comments for those tasks
+  const commentRows = await getRawRows('Comments!A:F')
+  for (const idx of commentRows.map((r, i) => taskIds.includes(r[1]) ? i + 2 : -1).filter(i => i !== -1).reverse())
+    await deleteRow('Comments', idx)
 }
 
 // ── Tasks ─────────────────────────────────────────────────────────────────────
@@ -196,6 +203,14 @@ export async function deleteTask(id: string): Promise<void> {
   const rowIndex = rows.findIndex(r => r[0] === id)
   if (rowIndex === -1) return
   await deleteRow('Tasks', rowIndex + 2)
+  // cascade: delete subtasks
+  const subtaskRows = await getRawRows('Subtasks!A:G')
+  for (const idx of subtaskRows.map((r, i) => r[1] === id ? i + 2 : -1).filter(i => i !== -1).reverse())
+    await deleteRow('Subtasks', idx)
+  // cascade: delete comments
+  const commentRows = await getRawRows('Comments!A:F')
+  for (const idx of commentRows.map((r, i) => r[1] === id ? i + 2 : -1).filter(i => i !== -1).reverse())
+    await deleteRow('Comments', idx)
 }
 
 // ── Comments ──────────────────────────────────────────────────────────────────
@@ -289,7 +304,7 @@ export async function updateSubtask(id: string, fields: { done?: boolean; note?:
 }
 
 export async function deleteSubtask(id: string): Promise<void> {
-  const rows = await getRawRows('Subtasks!A:E')
+  const rows = await getRawRows('Subtasks!A:G')
   const rowIndex = rows.findIndex(r => r[0] === id)
   if (rowIndex === -1) return
   await deleteRow('Subtasks', rowIndex + 2)
@@ -305,7 +320,8 @@ async function getRawRows(range: string): Promise<string[][]> {
 async function deleteRow(sheetName: string, rowNumber: number): Promise<void> {
   const meta = await sheets().spreadsheets.get({ spreadsheetId: SHEET_ID })
   const sheet = meta.data.sheets?.find(s => s.properties?.title === sheetName)
-  if (!sheet?.properties?.sheetId) return
+  // sheetId can be 0 for the first sheet — must check for null/undefined explicitly
+  if (sheet?.properties?.sheetId == null) return
   await sheets().spreadsheets.batchUpdate({
     spreadsheetId: SHEET_ID,
     requestBody: {
