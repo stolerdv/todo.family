@@ -120,7 +120,7 @@ export async function archiveSection(id: string, archived: boolean): Promise<voi
   if (rowIndex === -1) return
   await sheets().spreadsheets.values.update({
     spreadsheetId: SHEET_ID,
-    range: `Sections!E${rowIndex + 2}`,
+    range: `Sections!E${rowIndex + 1}`,
     valueInputOption: 'RAW',
     requestBody: { values: [[String(archived)]] },
   })
@@ -130,20 +130,16 @@ export async function deleteSection(id: string): Promise<void> {
   const rows = await getRawRows('Sections!A:E')
   const rowIndex = rows.findIndex(r => r[0] === id)
   if (rowIndex === -1) return
-  await deleteRow('Sections', rowIndex + 2)
-  // find task ids in this section
+  await deleteRow('Sections', rowIndex + 1)
   const taskRows = await getRawRows('Tasks!A:G')
   const taskIds = taskRows.filter(r => r[1] === id).map(r => r[0])
-  // delete tasks (reverse order to keep indices valid)
-  for (const idx of taskRows.map((r, i) => r[1] === id ? i + 2 : -1).filter(i => i !== -1).reverse())
+  for (const idx of taskRows.map((r, i) => r[1] === id ? i + 1 : -1).filter(i => i !== -1).reverse())
     await deleteRow('Tasks', idx)
-  // cascade: delete subtasks for those tasks
   const subtaskRows = await getRawRows('Subtasks!A:G')
-  for (const idx of subtaskRows.map((r, i) => taskIds.includes(r[1]) ? i + 2 : -1).filter(i => i !== -1).reverse())
+  for (const idx of subtaskRows.map((r, i) => taskIds.includes(r[1]) ? i + 1 : -1).filter(i => i !== -1).reverse())
     await deleteRow('Subtasks', idx)
-  // cascade: delete comments for those tasks
   const commentRows = await getRawRows('Comments!A:F')
-  for (const idx of commentRows.map((r, i) => taskIds.includes(r[1]) ? i + 2 : -1).filter(i => i !== -1).reverse())
+  for (const idx of commentRows.map((r, i) => taskIds.includes(r[1]) ? i + 1 : -1).filter(i => i !== -1).reverse())
     await deleteRow('Comments', idx)
 }
 
@@ -192,7 +188,7 @@ export async function updateTask(id: string, fields: Partial<{ state: TaskState;
   ]
   await sheets().spreadsheets.values.update({
     spreadsheetId: SHEET_ID,
-    range: `Tasks!A${rowIndex + 2}:G${rowIndex + 2}`,
+    range: `Tasks!A${rowIndex + 1}:G${rowIndex + 1}`,
     valueInputOption: 'RAW',
     requestBody: { values: [updated] },
   })
@@ -202,14 +198,12 @@ export async function deleteTask(id: string): Promise<void> {
   const rows = await getRawRows('Tasks!A:G')
   const rowIndex = rows.findIndex(r => r[0] === id)
   if (rowIndex === -1) return
-  await deleteRow('Tasks', rowIndex + 2)
-  // cascade: delete subtasks
+  await deleteRow('Tasks', rowIndex + 1)
   const subtaskRows = await getRawRows('Subtasks!A:G')
-  for (const idx of subtaskRows.map((r, i) => r[1] === id ? i + 2 : -1).filter(i => i !== -1).reverse())
+  for (const idx of subtaskRows.map((r, i) => r[1] === id ? i + 1 : -1).filter(i => i !== -1).reverse())
     await deleteRow('Subtasks', idx)
-  // cascade: delete comments
   const commentRows = await getRawRows('Comments!A:F')
-  for (const idx of commentRows.map((r, i) => r[1] === id ? i + 2 : -1).filter(i => i !== -1).reverse())
+  for (const idx of commentRows.map((r, i) => r[1] === id ? i + 1 : -1).filter(i => i !== -1).reverse())
     await deleteRow('Comments', idx)
 }
 
@@ -241,7 +235,7 @@ export async function deleteComment(id: string): Promise<void> {
   const rows = await getRawRows('Comments!A:F')
   const rowIndex = rows.findIndex(r => r[0] === id)
   if (rowIndex === -1) return
-  await deleteRow('Comments', rowIndex + 2)
+  await deleteRow('Comments', rowIndex + 1)
 }
 
 // ── Subtasks ──────────────────────────────────────────────────────────────────
@@ -292,7 +286,7 @@ export async function updateSubtask(id: string, fields: { done?: boolean; note?:
   const row = rows[rowIndex]
   await sheets().spreadsheets.values.update({
     spreadsheetId: SHEET_ID,
-    range: `Subtasks!D${rowIndex + 2}:G${rowIndex + 2}`,
+    range: `Subtasks!D${rowIndex + 1}:G${rowIndex + 1}`,
     valueInputOption: 'RAW',
     requestBody: { values: [[
       String(fields.done ?? row[3] === 'true'),
@@ -307,7 +301,7 @@ export async function deleteSubtask(id: string): Promise<void> {
   const rows = await getRawRows('Subtasks!A:G')
   const rowIndex = rows.findIndex(r => r[0] === id)
   if (rowIndex === -1) return
-  await deleteRow('Subtasks', rowIndex + 2)
+  await deleteRow('Subtasks', rowIndex + 1)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
