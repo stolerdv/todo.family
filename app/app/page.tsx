@@ -325,34 +325,62 @@ export default function AppPage() {
               {isExpanded && (
                 <div className="border-t border-gray-800 px-3 md:px-4 py-2 space-y-0.5">
                   {taskSubtasks.map(sub => (
-                    <div key={sub.id} className="group">
-                      <div className="flex items-center gap-3 py-2">
+                    <div key={sub.id} className="border-b border-gray-800/50 last:border-0">
+                      <div className="flex items-center gap-3 py-2.5">
+                        {/* Checkbox */}
                         <button
                           onClick={() => toggleSubtask(sub.id, !sub.done)}
-                          className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 transition-all duration-300 ${
-                            sub.done ? 'bg-green-600 border-green-600' : 'border-gray-600 hover:border-gray-400'
+                          className={`w-6 h-6 rounded-md border-2 flex items-center justify-center shrink-0 transition-all duration-300 ${
+                            sub.done ? 'bg-green-600 border-green-600 scale-95' : 'border-gray-600 active:border-gray-400'
                           }`}
                         >
-                          {sub.done && <span className="text-white text-xs leading-none">✓</span>}
+                          {sub.done && (
+                            <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                            </svg>
+                          )}
                         </button>
+
+                        {/* Title */}
                         <span className={`flex-1 text-sm transition-all duration-300 ${sub.done ? 'text-gray-500 line-through' : 'text-gray-200'}`}>
                           {sub.title}
                         </span>
+
+                        {/* Note button — always visible */}
                         <button
                           onClick={() => setEditingNoteFor(editingNoteFor === sub.id ? null : sub.id)}
-                          className={`text-xs px-1.5 py-0.5 rounded transition opacity-0 group-hover:opacity-100 ${
-                            sub.note ? '!opacity-100 text-indigo-400' : 'text-gray-600 hover:text-gray-400'
+                          className={`flex items-center justify-center w-8 h-8 rounded-lg transition shrink-0 ${
+                            sub.note
+                              ? 'text-indigo-400 bg-indigo-500/10'
+                              : 'text-gray-600 hover:text-gray-400 active:bg-gray-800'
                           }`}
+                          title="Заметка"
                         >
-                          {sub.note ? '💬' : '+ заметка'}
+                          {sub.note ? (
+                            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                              <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
+                            </svg>
+                          ) : (
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                            </svg>
+                          )}
                         </button>
+
+                        {/* Delete button — always visible */}
                         <button
                           onClick={() => removeSubtask(sub.id)}
-                          className="opacity-0 group-hover:opacity-100 text-gray-600 hover:text-red-400 transition text-lg leading-none p-1"
-                        >×</button>
+                          className="flex items-center justify-center w-8 h-8 rounded-lg text-gray-700 hover:text-red-400 active:bg-gray-800 transition shrink-0"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
                       </div>
+
+                      {/* Note area */}
                       {(editingNoteFor === sub.id || sub.note) && (
-                        <div className="ml-8 mb-1">
+                        <div className="ml-9 mb-2.5">
                           {editingNoteFor === sub.id ? (
                             <textarea
                               autoFocus
@@ -360,14 +388,16 @@ export default function AppPage() {
                               onBlur={e => { saveNote(sub.id, e.target.value); setEditingNoteFor(null) }}
                               onKeyDown={e => { if (e.key === 'Escape') setEditingNoteFor(null) }}
                               placeholder="Комментарий к выполнению..."
-                              rows={2}
-                              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-300 outline-none focus:border-indigo-500 resize-none"
+                              rows={3}
+                              className="w-full bg-gray-800 border border-indigo-500/50 rounded-xl px-3 py-2.5 text-sm text-gray-200 outline-none focus:border-indigo-500 resize-none placeholder-gray-600"
                             />
                           ) : (
                             <p
-                              className="text-xs text-gray-500 italic cursor-pointer hover:text-gray-400 transition pb-1"
+                              className="text-sm text-gray-500 italic cursor-pointer active:text-gray-300 transition bg-gray-800/50 rounded-xl px-3 py-2"
                               onClick={() => setEditingNoteFor(sub.id)}
-                            >{sub.note}</p>
+                            >
+                              {sub.note}
+                            </p>
                           )}
                         </div>
                       )}
