@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import type { Section, Task, TaskState, Subtask, Priority, Comment } from '@/lib/sheets'
+import Dashboard from '@/components/Dashboard'
 
 const STATES: TaskState[] = ['Todo', 'In Progress', 'Review', 'Blocked', 'Done', 'Cancelled', 'Deferred', 'Delegated']
 const DONE_STATES: TaskState[] = ['Done', 'Cancelled']
@@ -40,6 +41,7 @@ function dueDateLabel(dueDate: string): { text: string; color: string } | null {
   return { text: due.toLocaleDateString('ru', { day: 'numeric', month: 'short' }), color: 'text-gray-500 bg-gray-800' }
 }
 
+const HOME_VIEW_ID     = '__home__'
 const PRIORITY_VIEW_ID = '__priority__'
 const ARCHIVE_VIEW_ID  = '__archive__'
 
@@ -85,8 +87,7 @@ export default function AppPage() {
     ])
     setSections(s); setTasks(t); setSubtasks(st)
     setUsername(me.username ?? ''); setUserId(me.userId ?? '')
-    if (s.filter((x: Section) => !x.archived).length > 0)
-      setActiveSection((a: string | null) => a ?? s.find((x: Section) => !x.archived)?.id ?? null)
+    setActiveSection((a: string | null) => a ?? HOME_VIEW_ID)
     setLoading(false)
   }
 
@@ -223,6 +224,7 @@ export default function AppPage() {
   const activeSections = sections.filter(s => !s.archived)
   const archivedSections = sections.filter(s => s.archived)
 
+  const isHomeView     = activeSection === HOME_VIEW_ID
   const isPriorityView = activeSection === PRIORITY_VIEW_ID
   const isArchiveView  = activeSection === ARCHIVE_VIEW_ID
 
@@ -484,12 +486,17 @@ export default function AppPage() {
 
       <nav className="flex-1 overflow-y-auto p-2 space-y-0.5">
         {/* Special views */}
-        <div
-          className={`flex items-center gap-2.5 rounded-xl px-3 py-2.5 cursor-pointer text-sm transition ${activeSection === PRIORITY_VIEW_ID ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'}`}
-          onClick={() => { setActiveSection(PRIORITY_VIEW_ID); setSidebarOpen(false) }}
-        >
-          <span>⭐</span> По важности
-        </div>
+        {[
+          { id: HOME_VIEW_ID,     icon: '🏠', label: 'Главная' },
+          { id: PRIORITY_VIEW_ID, icon: '⭐', label: 'По важности' },
+        ].map(v => (
+          <div key={v.id}
+            className={`flex items-center gap-2.5 rounded-xl px-3 py-2.5 cursor-pointer text-sm transition ${activeSection === v.id ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'}`}
+            onClick={() => { setActiveSection(v.id); setSidebarOpen(false) }}
+          >
+            <span>{v.icon}</span> {v.label}
+          </div>
+        ))}
 
         <p className="text-xs text-gray-600 px-3 py-1.5 uppercase tracking-wider mt-1">Разделы</p>
 
@@ -670,7 +677,32 @@ export default function AppPage() {
         </div>
       )}
       <main className="flex-1 flex flex-col overflow-hidden bg-gray-950">
-        {activeSection ? mainContent : (
+        {isHomeView ? (
+          <>
+            <div className="pt-safe md:hidden bg-gray-950" />
+            <div className="px-4 md:px-6 py-3 border-b border-gray-800/80 flex items-center gap-3 shrink-0">
+              <button className="md:hidden text-gray-500 hover:text-gray-300 transition p-1 -ml-1" onClick={() => setSidebarOpen(true)}>
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
+              </button>
+              <div>
+                <h1 className="font-semibold text-base">Главная</h1>
+                <p className="text-xs text-gray-600">
+                  {new Date().toLocaleDateString('ru', { weekday: 'long', day: 'numeric', month: 'long' })}
+                </p>
+              </div>
+            </div>
+            <Dashboard
+              tasks={tasks}
+              sections={sections}
+              subtasks={subtasks}
+              onTaskClick={(taskId, sectionId) => {
+                setActiveSection(sectionId)
+                setExpandedTask(taskId)
+                setSidebarOpen(false)
+              }}
+            />
+          </>
+        ) : activeSection ? mainContent : (
           <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center p-8">
             <div className="w-16 h-16 rounded-2xl bg-gray-800/80 flex items-center justify-center mb-2">
               <svg className="w-8 h-8 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
