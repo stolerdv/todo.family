@@ -263,63 +263,74 @@ export default function AppPage() {
           const pct = total > 0 ? Math.round((done / total) * 100) : 0
 
           return (
-            <div key={task.id} className={`bg-gray-900 border rounded-xl transition ${
-              isExpanded ? 'border-gray-600' : 'border-gray-800 hover:border-gray-700'
+            <div key={task.id} className={`bg-gray-900 border rounded-2xl transition ${
+              isExpanded ? 'border-gray-600' : 'border-gray-800 active:border-gray-700'
             }`}>
               <div
-                className="flex items-center gap-2 md:gap-3 px-3 md:px-4 py-3 cursor-pointer"
+                className="px-4 pt-3.5 pb-3 cursor-pointer"
                 onClick={() => setExpandedTask(isExpanded ? null : task.id)}
               >
-                <span className={`text-gray-500 text-xs transition-transform shrink-0 ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
-
-                {/* State */}
-                <div className="relative shrink-0" onClick={e => e.stopPropagation()}>
+                {/* Title row */}
+                <div className="flex items-start gap-2.5">
+                  <span className={`text-gray-500 text-xs mt-1 transition-transform shrink-0 ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
+                  <span className={`flex-1 text-base font-medium leading-snug ${
+                    DONE_STATES.includes(task.state) ? 'text-gray-500 line-through' : 'text-gray-100'
+                  }`}>
+                    {task.title}
+                  </span>
                   <button
-                    onClick={() => setStateMenuTaskId(stateMenuTaskId === task.id ? null : task.id)}
-                    className={`text-xs font-medium px-2 py-1 rounded-full whitespace-nowrap transition hover:opacity-80 ${STATE_STYLES[task.state]}`}
+                    onClick={e => { e.stopPropagation(); removeTask(task.id) }}
+                    className="text-gray-700 hover:text-red-400 active:text-red-400 transition shrink-0 mt-0.5 p-1 -mr-1"
                   >
-                    {task.state}
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
                   </button>
-                  {stateMenuTaskId === task.id && (
-                    <div className="absolute left-0 top-8 z-50 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-1 min-w-[150px]">
-                      {STATES.map(s => (
-                        <button
-                          key={s}
-                          onClick={() => setTaskState(task.id, s)}
-                          className={`w-full text-left text-xs px-3 py-2 rounded-lg transition hover:bg-gray-800 ${s === task.state ? 'opacity-40' : ''}`}
-                        >
-                          <span className={`inline-block w-2 h-2 rounded-full mr-2 ${STATE_STYLES[s].split(' ')[0]}`} />
-                          {s}
-                        </button>
-                      ))}
+                </div>
+
+                {/* Meta row */}
+                <div className="flex items-center gap-2 mt-2.5 ml-5" onClick={e => e.stopPropagation()}>
+                  {/* State */}
+                  <div className="relative">
+                    <button
+                      onClick={() => setStateMenuTaskId(stateMenuTaskId === task.id ? null : task.id)}
+                      className={`text-xs font-medium px-2.5 py-1 rounded-full whitespace-nowrap transition active:opacity-70 ${STATE_STYLES[task.state]}`}
+                    >
+                      {task.state}
+                    </button>
+                    {stateMenuTaskId === task.id && (
+                      <div className="absolute left-0 top-8 z-50 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-1 min-w-[160px]">
+                        {STATES.map(s => (
+                          <button
+                            key={s}
+                            onClick={() => setTaskState(task.id, s)}
+                            className={`w-full text-left text-sm px-3 py-2.5 rounded-lg transition hover:bg-gray-800 active:bg-gray-800 ${s === task.state ? 'opacity-40' : ''}`}
+                          >
+                            <span className={`inline-block w-2 h-2 rounded-full mr-2 ${STATE_STYLES[s].split(' ')[0]}`} />
+                            {s}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Progress */}
+                  {total > 0 && (
+                    <div className="flex items-center gap-2 flex-1">
+                      <div className="flex-1 h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-700 ease-out ${
+                            pct === 100 ? 'bg-green-500' : flashingTask === task.id ? 'bg-indigo-400' : 'bg-indigo-600'
+                          } ${flashingTask === task.id ? 'shadow-[0_0_8px_2px_rgba(99,102,241,0.7)]' : ''}`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <span className={`text-xs shrink-0 transition-colors duration-300 ${pct === 100 ? 'text-green-400' : 'text-gray-600'}`}>
+                        {done}/{total}
+                      </span>
                     </div>
                   )}
                 </div>
-
-                <span className={`flex-1 text-sm min-w-0 truncate ${DONE_STATES.includes(task.state) ? 'text-gray-500 line-through' : ''}`}>
-                  {task.title}
-                </span>
-
-                {total > 0 && (
-                  <div className="flex items-center gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
-                    <div className="w-14 md:w-20 h-1.5 bg-gray-700 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full rounded-full transition-all duration-700 ease-out ${
-                          pct === 100 ? 'bg-green-500' : flashingTask === task.id ? 'bg-indigo-400' : 'bg-indigo-600'
-                        } ${flashingTask === task.id ? 'shadow-[0_0_8px_2px_rgba(99,102,241,0.7)]' : ''}`}
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                    <span className={`text-xs w-7 text-right transition-colors duration-300 ${pct === 100 ? 'text-green-400' : 'text-gray-500'}`}>
-                      {done}/{total}
-                    </span>
-                  </div>
-                )}
-
-                <button
-                  onClick={e => { e.stopPropagation(); removeTask(task.id) }}
-                  className="text-gray-600 hover:text-red-400 transition text-lg leading-none shrink-0 ml-1 p-1"
-                >×</button>
               </div>
 
               {isExpanded && (
