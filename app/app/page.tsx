@@ -9,6 +9,7 @@ const STATES: TaskState[] = ['Todo', 'In Progress', 'Review', 'Blocked', 'Done',
 const DONE_STATES: TaskState[] = ['Done', 'Cancelled']
 const PRIORITIES: Priority[] = ['Critical', 'High', 'Medium', 'Low', 'None']
 const PRIORITY_ORDER: Record<Priority, number> = { Critical: 0, High: 1, Medium: 2, Low: 3, None: 4 }
+type SortMode = 'default' | 'priority' | 'deadline' | 'created'
 
 const STATE_META: Record<TaskState, { color: string; dot: string }> = {
   'Todo':        { color: 'bg-gray-700/80 text-gray-300', dot: 'bg-gray-500' },
@@ -65,6 +66,14 @@ export default function AppPage() {
   const [priorityMenuTaskId, setPriorityMenuTaskId] = useState<string | null>(null)
   const [editingNoteFor, setEditingNoteFor] = useState<string | null>(null)
   const [subtaskPriorityMenuId, setSubtaskPriorityMenuId] = useState<string | null>(null)
+  const [sortMode, setSortMode] = useState<SortMode>('default')
+  const [sortMenuOpen, setSortMenuOpen] = useState(false)
+  const [shareMenuId, setShareMenuId] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+  const [quickAddOpen, setQuickAddOpen] = useState(false)
+  const [quickAddSection, setQuickAddSection] = useState('')
+  const quickAddRef = useRef<HTMLInputElement>(null)
+  const quickSectionRef = useRef<HTMLSelectElement>(null)
   const [flashingTask, setFlashingTask]     = useState<string | null>(null)
   const [searchQuery, setSearchQuery]       = useState('')
   const [showSearch, setShowSearch]         = useState(false)
@@ -107,7 +116,7 @@ export default function AppPage() {
     if (newSectionRef.current) newSectionRef.current.value = ''
     setAddingSection(false); setSidebarOpen(false)
     const tempId = `temp-${Date.now()}`
-    setSections(prev => [...prev, { id: tempId, name, createdAt: '', userId, archived: false }])
+    setSections(prev => [...prev, { id: tempId, name, createdAt: '', userId, archived: false, shareCode: '' }])
     setActiveSection(tempId)
     try {
       const res = await fetch('/api/sections', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })
@@ -210,6 +219,13 @@ export default function AppPage() {
     await fetch(`/api/comments/${id}`, { method: 'DELETE' })
   }
 
+  async function leaveSection(sectionId: string) {
+    setSections(prev => prev.filter(s => s.id !== sectionId))
+    setTasks(prev => prev.filter(t => t.sectionId !== sectionId))
+    if (activeSection === sectionId) setActiveSection(HOME_VIEW_ID)
+    await fetch(`/api/sections/${sectionId}/leave`, { method: 'POST' })
+  }
+
   async function logout() {
     await fetch('/api/auth', { method: 'DELETE' })
     router.push('/login')
@@ -229,8 +245,38 @@ export default function AppPage() {
         .sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority] || (a.dueDate || 'z').localeCompare(b.dueDate || 'z'))
     : tasks.filter(t => t.sectionId === activeSection)
 
-  const visibleTasks = showDone ? sectionTasks : sectionTasks.filter(t => !DONE_STATES.includes(t.state))
+  function applySortMode(list: Task[]): Task[] {
+    if (sortMode === 'priority') return [...list].sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority])
+    if (sortMode === 'deadline') return [...list].sort((a, b) => (a.dueDate || 'z').localeCompare(b.dueDate || 'z'))
+    if (sortMode === 'created')  return [...list].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    return list
+  }
+
+  const baseTasks    = showDone ? sectionTasks : sectionTasks.filter(t => !DONE_STATES.includes(t.state))
+  const visibleTasks = applySortMode(baseTasks)
   const hiddenCount  = sectionTasks.filter(t => DONE_STATES.includes(t.state)).length
+
+  async function quickAdd() {
+    const title = quickAddRef.current?.value?.trim()
+    const sectionId = quickSectionRef.current?.value
+    if (!title || !sectionId) return
+    if (quickAddRef.current) quickAddRef.current.value = ''
+    setQuickAddOpen(false)
+    const tempId = `temp-${Date.now()}`
+    setTasks(prev => [...prev, { id: tempId, sectionId, title, state: 'Todo', createdAt: '', priority: 'None', dueDate: '' }])
+    try {
+      const res = await fetch('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sectionId, title }) })
+      const task: Task = await res.json()
+      setTasks(prev => prev.map(t => t.id === tempId ? task : t))
+    } catch { setTasks(prev => prev.filter(t => t.id !== tempId)) }
+  }
+
+  function copyShareLink(section: Section) {
+    const url = `${window.location.origin}/join/${section.shareCode}`
+    navigator.clipboard.writeText(url)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
 
   const searchResults = searchQuery.trim().length > 1
     ? tasks.filter(t => t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -575,18 +621,48 @@ export default function AppPage() {
         {activeSections.map(s => {
           const count = sectionTaskCount(s.id)
           const isActive = activeSection === s.id
+          const isSharedSection = !!s.isShared
           return (
-            <div key={s.id} className={`group flex items-center justify-between rounded-xl px-3 py-2.5 cursor-pointer text-sm transition-all ${
-              isActive ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
-            }`} onClick={() => { setActiveSection(s.id); setSidebarOpen(false) }}>
-              <span className="truncate flex-1">{s.name}</span>
-              <div className="flex items-center gap-1 ml-2 shrink-0">
-                {count > 0 && <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${isActive ? 'bg-white/20' : 'bg-gray-700 text-gray-400'}`}>{count}</span>}
-                <button onClick={e => { e.stopPropagation(); toggleArchiveSection(s.id, true) }}
-                  className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-yellow-400 transition w-5 h-5 flex items-center justify-center rounded text-xs" title="В архив">📦</button>
-                <button onClick={e => { e.stopPropagation(); removeSection(s.id) }}
-                  className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 transition w-5 h-5 flex items-center justify-center rounded">×</button>
+            <div key={s.id}>
+              <div className={`group flex items-center justify-between rounded-xl px-3 py-2.5 cursor-pointer text-sm transition-all ${
+                isActive ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
+              }`} onClick={() => { setActiveSection(s.id); setSidebarOpen(false) }}>
+                <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                  {isSharedSection && <span className="text-xs shrink-0">👥</span>}
+                  <span className="truncate">{s.name}</span>
+                </div>
+                <div className="flex items-center gap-0.5 ml-1 shrink-0">
+                  {count > 0 && <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${isActive ? 'bg-white/20' : 'bg-gray-700 text-gray-400'}`}>{count}</span>}
+                  {!isSharedSection && (
+                    <button onClick={e => { e.stopPropagation(); setShareMenuId(shareMenuId === s.id ? null : s.id) }}
+                      className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-indigo-400 transition w-5 h-5 flex items-center justify-center rounded text-xs" title="Поделиться">
+                      🔗
+                    </button>
+                  )}
+                  {!isSharedSection && (
+                    <button onClick={e => { e.stopPropagation(); toggleArchiveSection(s.id, true) }}
+                      className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-yellow-400 transition w-5 h-5 flex items-center justify-center rounded text-xs" title="В архив">📦</button>
+                  )}
+                  <button onClick={e => { e.stopPropagation(); isSharedSection ? leaveSection(s.id) : removeSection(s.id) }}
+                    className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 transition w-5 h-5 flex items-center justify-center rounded">×</button>
+                </div>
               </div>
+
+              {/* Share popup */}
+              {shareMenuId === s.id && (
+                <div className="mx-1 mb-1 bg-gray-800 border border-gray-700 rounded-xl p-3 text-xs">
+                  <p className="text-gray-400 mb-2 font-medium">Ссылка-приглашение</p>
+                  <div className="flex gap-2">
+                    <input readOnly value={`${typeof window !== 'undefined' ? window.location.origin : ''}/join/${s.shareCode}`}
+                      className="flex-1 bg-gray-900 rounded-lg px-2 py-1.5 text-gray-300 outline-none text-xs min-w-0" />
+                    <button onClick={() => { copyShareLink(s); setShareMenuId(null) }}
+                      className="bg-indigo-600 hover:bg-indigo-500 px-2.5 py-1.5 rounded-lg transition whitespace-nowrap">
+                      {copied ? '✓' : 'Копировать'}
+                    </button>
+                  </div>
+                  <p className="text-gray-600 mt-1.5">Отправь эту ссылку — человек войдёт в раздел</p>
+                </div>
+              )}
             </div>
           )
         })}
@@ -649,14 +725,35 @@ export default function AppPage() {
             </p>
           )}
         </div>
-        {!isPriorityView && !isArchiveView && (
-          <button onClick={() => setShowDone(v => !v)}
-            className={`text-xs px-3 py-1.5 rounded-full transition whitespace-nowrap shrink-0 ${
-              showDone ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-500/30' : 'text-gray-600 border border-gray-800 hover:border-gray-700 hover:text-gray-400'
-            }`}>
-            {showDone ? 'Скрыть' : hiddenCount > 0 ? `+${hiddenCount} завершённых` : 'Завершённые'}
-          </button>
-        )}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {/* Sort */}
+          <div className="relative">
+            <button onClick={() => setSortMenuOpen(v => !v)}
+              className={`text-xs px-2.5 py-1.5 rounded-full border transition ${sortMode !== 'default' ? 'border-indigo-500/40 text-indigo-400 bg-indigo-500/10' : 'border-gray-800 text-gray-600 hover:text-gray-400'}`}
+              title="Сортировка">
+              ↕
+            </button>
+            {sortMenuOpen && (
+              <div className="absolute right-0 top-9 z-50 bg-gray-900 border border-gray-700 rounded-xl shadow-xl p-1 min-w-[160px]">
+                {([['default','По умолчанию'],['priority','По важности'],['deadline','По дедлайну'],['created','По дате']] as [SortMode,string][]).map(([mode, label]) => (
+                  <button key={mode} onClick={() => { setSortMode(mode); setSortMenuOpen(false) }}
+                    className={`w-full text-left text-sm px-3 py-2 rounded-lg transition ${sortMode === mode ? 'text-indigo-400 bg-indigo-500/10' : 'text-gray-300 hover:bg-gray-800'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {!isPriorityView && !isArchiveView && (
+            <button onClick={() => setShowDone(v => !v)}
+              className={`text-xs px-3 py-1.5 rounded-full transition whitespace-nowrap ${
+                showDone ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-500/30' : 'text-gray-600 border border-gray-800 hover:border-gray-700 hover:text-gray-400'
+              }`}>
+              {showDone ? 'Скрыть' : hiddenCount > 0 ? `+${hiddenCount}` : 'Готово'}
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 md:px-6 py-4 space-y-2">
@@ -753,8 +850,55 @@ export default function AppPage() {
           </div>
         )}
       </main>
-      {(stateMenuTaskId || priorityMenuTaskId || subtaskPriorityMenuId) && (
-        <div className="fixed inset-0 z-40" onClick={() => { setStateMenuTaskId(null); setPriorityMenuTaskId(null); setSubtaskPriorityMenuId(null) }} />
+      {/* Overlays */}
+      {(stateMenuTaskId || priorityMenuTaskId || subtaskPriorityMenuId || sortMenuOpen || shareMenuId) && (
+        <div className="fixed inset-0 z-40" onClick={() => {
+          setStateMenuTaskId(null); setPriorityMenuTaskId(null)
+          setSubtaskPriorityMenuId(null); setSortMenuOpen(false); setShareMenuId(null)
+        }} />
+      )}
+
+      {/* Quick add floating button */}
+      {isHomeView && activeSections.length > 0 && (
+        <button
+          onClick={() => { setQuickAddOpen(true); setQuickAddSection(activeSections[0].id) }}
+          className="fixed bottom-8 right-6 z-30 w-14 h-14 bg-indigo-600 hover:bg-indigo-500 rounded-full shadow-2xl shadow-indigo-500/40 flex items-center justify-center text-2xl transition active:scale-95"
+        >+</button>
+      )}
+
+      {/* Quick add modal */}
+      {quickAddOpen && (
+        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          onClick={e => { if (e.target === e.currentTarget) setQuickAddOpen(false) }}>
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-5 w-full max-w-md shadow-2xl">
+            <h2 className="font-semibold mb-4">Быстрое добавление</h2>
+            <input
+              ref={quickAddRef}
+              autoFocus
+              placeholder="Название задачи..."
+              onKeyDown={e => { if (e.key === 'Enter') quickAdd(); if (e.key === 'Escape') setQuickAddOpen(false) }}
+              className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-sm outline-none focus:border-indigo-500 mb-3"
+            />
+            <select
+              ref={quickSectionRef}
+              value={quickAddSection}
+              onChange={e => setQuickAddSection(e.target.value)}
+              className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-sm outline-none focus:border-indigo-500 mb-4 text-gray-200"
+            >
+              {activeSections.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+            <div className="flex gap-2">
+              <button onClick={quickAdd}
+                className="flex-1 bg-indigo-600 hover:bg-indigo-500 rounded-xl py-3 text-sm font-medium transition">
+                Добавить
+              </button>
+              <button onClick={() => setQuickAddOpen(false)}
+                className="px-4 bg-gray-800 hover:bg-gray-700 rounded-xl text-sm transition">
+                Отмена
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

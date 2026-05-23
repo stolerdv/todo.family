@@ -1,8 +1,9 @@
 'use client'
 
 import { useRef, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
+import { Suspense } from 'react'
 
 export default function LoginPage() {
   const [error, setError] = useState('')
@@ -10,6 +11,8 @@ export default function LoginPage() {
   const usernameRef = useRef<HTMLInputElement>(null)
   const passwordRef = useRef<HTMLInputElement>(null)
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const next = searchParams.get('next') ?? '/app'
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -25,7 +28,7 @@ export default function LoginPage() {
         body: JSON.stringify({ username, password }),
       })
       if (res.ok) {
-        router.push('/app')
+        router.push(next)
       } else {
         const data = await res.json()
         setError(data.error ?? 'Ошибка входа')

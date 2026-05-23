@@ -7,8 +7,10 @@ export async function middleware(req: NextRequest) {
   if (
     pathname.startsWith('/login') ||
     pathname.startsWith('/register') ||
+    pathname.startsWith('/join') ||
     pathname.startsWith('/api/auth') ||
-    pathname.startsWith('/api/register')
+    pathname.startsWith('/api/register') ||
+    pathname.startsWith('/api/join')
   ) {
     return NextResponse.next()
   }

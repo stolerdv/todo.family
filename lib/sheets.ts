@@ -25,6 +25,15 @@ export interface Section {
   createdAt: string
   userId: string
   archived: boolean
+  shareCode: string
+  isShared?: boolean  // true if user joined via invite (not owner)
+}
+
+export interface SectionMember {
+  id: string
+  sectionId: string
+  userId: string
+  joinedAt: string
 }
 
 export interface Comment {
@@ -91,31 +100,78 @@ export async function createUser(username: string, passwordHash: string): Promis
 
 // ── Sections ──────────────────────────────────────────────────────────────────
 
+function genCode(): string {
+  return Math.random().toString(36).slice(2, 10).toUpperCase()
+}
+
 export async function getSections(userId?: string): Promise<Section[]> {
   const res = await sheets().spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: 'Sections!A2:E',
+    range: 'Sections!A2:F',
   })
-  const all = (res.data.values ?? []).map(([id, name, createdAt, uid, archived]) => ({
-    id, name, createdAt, userId: uid ?? '', archived: archived === 'true',
+  const all = (res.data.values ?? []).map(([id, name, createdAt, uid, archived, shareCode]) => ({
+    id, name, createdAt, userId: uid ?? '', archived: archived === 'true', shareCode: shareCode ?? '',
   }))
-  return userId ? all.filter(s => s.userId === userId) : all
+  if (!userId) return all
+
+  // own sections
+  const own = all.filter(s => s.userId === userId)
+
+  // joined shared sections
+  const memberRows = await getRawRows('SectionMembers!A2:D')
+  const joinedIds = memberRows.filter(r => r[2] === userId).map(r => r[1])
+  const joined = all.filter(s => joinedIds.includes(s.id) && s.userId !== userId)
+    .map(s => ({ ...s, isShared: true }))
+
+  return [...own, ...joined]
+}
+
+export async function getSectionByCode(code: string): Promise<Section | null> {
+  const res = await sheets().spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: 'Sections!A2:F',
+  })
+  const row = (res.data.values ?? []).find(r => r[5] === code)
+  if (!row) return null
+  const [id, name, createdAt, uid, archived, shareCode] = row
+  return { id, name, createdAt, userId: uid, archived: archived === 'true', shareCode }
+}
+
+export async function joinSection(sectionId: string, userId: string): Promise<void> {
+  // check not already joined
+  const rows = await getRawRows('SectionMembers!A2:D')
+  if (rows.some(r => r[1] === sectionId && r[2] === userId)) return
+  const id = crypto.randomUUID()
+  await sheets().spreadsheets.values.append({
+    spreadsheetId: SHEET_ID,
+    range: 'SectionMembers!A:D',
+    valueInputOption: 'RAW',
+    requestBody: { values: [[id, sectionId, userId, new Date().toISOString()]] },
+  })
+}
+
+export async function leaveSection(sectionId: string, userId: string): Promise<void> {
+  const rows = await getRawRows('SectionMembers!A:D')
+  const rowIndex = rows.findIndex(r => r[1] === sectionId && r[2] === userId)
+  if (rowIndex === -1) return
+  await deleteRow('SectionMembers', rowIndex + 1)
 }
 
 export async function createSection(name: string, userId: string): Promise<Section> {
   const id = crypto.randomUUID()
   const createdAt = new Date().toISOString()
+  const shareCode = genCode()
   await sheets().spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
-    range: 'Sections!A:E',
+    range: 'Sections!A:F',
     valueInputOption: 'RAW',
-    requestBody: { values: [[id, name, createdAt, userId, 'false']] },
+    requestBody: { values: [[id, name, createdAt, userId, 'false', shareCode]] },
   })
-  return { id, name, createdAt, userId, archived: false }
+  return { id, name, createdAt, userId, archived: false, shareCode }
 }
 
 export async function archiveSection(id: string, archived: boolean): Promise<void> {
-  const rows = await getRawRows('Sections!A:E')
+  const rows = await getRawRows('Sections!A:F')
   const rowIndex = rows.findIndex(r => r[0] === id)
   if (rowIndex === -1) return
   await sheets().spreadsheets.values.update({
@@ -127,7 +183,7 @@ export async function archiveSection(id: string, archived: boolean): Promise<voi
 }
 
 export async function deleteSection(id: string): Promise<void> {
-  const rows = await getRawRows('Sections!A:E')
+  const rows = await getRawRows('Sections!A:F')
   const rowIndex = rows.findIndex(r => r[0] === id)
   if (rowIndex === -1) return
   await deleteRow('Sections', rowIndex + 1)
