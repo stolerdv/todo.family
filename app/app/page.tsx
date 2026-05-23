@@ -393,10 +393,20 @@ export default function AppPage() {
                 📅 {due.text}
               </button>
             ) : (
-              <label className="text-xs px-2.5 py-1 rounded-full text-gray-700 hover:text-gray-500 cursor-pointer transition">
-                + Дедлайн
-                <input type="date" className="sr-only" onChange={e => updateTask(task.id, { dueDate: e.target.value })} />
-              </label>
+              <div className="relative">
+                <button
+                  onClick={() => (document.getElementById(`date-${task.id}`) as HTMLInputElement)?.showPicker?.()}
+                  className="text-xs px-2.5 py-1 rounded-full text-gray-700 hover:text-gray-500 cursor-pointer transition"
+                >
+                  + Дедлайн
+                </button>
+                <input
+                  id={`date-${task.id}`}
+                  type="date"
+                  onChange={e => { if (e.target.value) updateTask(task.id, { dueDate: e.target.value }) }}
+                  style={{ position: 'absolute', opacity: 0, width: '100%', height: '100%', top: 0, left: 0, cursor: 'pointer' }}
+                />
+              </div>
             )}
 
             {/* Progress */}
