@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { Suspense } from 'react'
 
-export default function LoginPage() {
+function LoginForm() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const usernameRef = useRef<HTMLInputElement>(null)
@@ -75,5 +75,13 @@ export default function LoginPage() {
         </p>
       </form>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
   )
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getComments, createComment } from '@/lib/sheets'
+import { getComments, createComment } from '@/lib/db'
 import { getUserFromRequest } from '@/lib/getUser'
 
 export async function GET(req: NextRequest) {

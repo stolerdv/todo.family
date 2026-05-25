@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import type { Task, Section, Subtask } from '@/lib/sheets'
+import type { Task, Section, Subtask } from '@/lib/db'
 
 const PRIORITY_COLOR: Record<string, string> = {
   Critical: 'bg-red-400',

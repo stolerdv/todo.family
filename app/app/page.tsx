@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import type { Section, Task, TaskState, Subtask, Priority, Comment } from '@/lib/sheets'
+import type { Section, Task, TaskState, Subtask, Priority, Comment } from '@/lib/db'
 import Dashboard from '@/components/Dashboard'
 
 const STATES: TaskState[] = ['Todo', 'In Progress', 'Review', 'Blocked', 'Done', 'Cancelled', 'Deferred', 'Delegated']

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { signToken, verifyPassword } from '@/lib/auth'
-import { findUserByUsername } from '@/lib/sheets'
+import { findUserByUsername } from '@/lib/db'
 
 export async function POST(req: NextRequest) {
   const { username, password } = await req.json()

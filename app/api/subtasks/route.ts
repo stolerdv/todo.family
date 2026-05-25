@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getSubtasks, createSubtask } from '@/lib/sheets'
+import { getSubtasks, getSubtasksByUser, createSubtask } from '@/lib/db'
+import { getUserFromRequest } from '@/lib/getUser'
 
 export async function GET(req: NextRequest) {
   try {
     const taskId = req.nextUrl.searchParams.get('taskId') ?? undefined
-    const subtasks = await getSubtasks(taskId)
+    if (taskId) {
+      const subtasks = await getSubtasks(taskId)
+      return NextResponse.json(subtasks)
+    }
+    const user = await getUserFromRequest()
+    if (!user) return NextResponse.json([])
+    const subtasks = await getSubtasksByUser(user.userId)
     return NextResponse.json(subtasks)
   } catch (e) {
     console.error('GET /api/subtasks error:', e)

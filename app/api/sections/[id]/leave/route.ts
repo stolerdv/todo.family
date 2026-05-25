@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { leaveSection } from '@/lib/sheets'
+import { leaveSection } from '@/lib/db'
 import { getUserFromRequest } from '@/lib/getUser'
 
 export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {

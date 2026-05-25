@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { deleteSection, archiveSection } from '@/lib/sheets'
+import { deleteSection, archiveSection } from '@/lib/db'
 
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
   await deleteSection(params.id)

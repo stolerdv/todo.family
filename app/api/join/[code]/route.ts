@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getSectionByCode, joinSection } from '@/lib/sheets'
+import { getSectionByCode, joinSection } from '@/lib/db'
 import { getUserFromRequest } from '@/lib/getUser'
 
 export async function GET(_req: NextRequest, { params }: { params: { code: string } }) {

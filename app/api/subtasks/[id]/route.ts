@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { updateSubtask, deleteSubtask, Priority } from '@/lib/sheets'
+import { updateSubtask, deleteSubtask, Priority } from '@/lib/db'
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
