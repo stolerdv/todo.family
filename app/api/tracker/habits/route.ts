@@ -27,6 +27,7 @@ export async function POST(req: NextRequest) {
       color: body.color,
       schedule: body.schedule,
       startDate: body.startDate,
+      targetPerDay: body.targetPerDay,
     })
     return NextResponse.json(habit, { status: 201 })
   } catch (e) {

@@ -14,6 +14,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       ...(b.color       !== undefined && { color: b.color }),
       ...(b.schedule    !== undefined && { schedule: b.schedule }),
       ...(b.startDate   !== undefined && { startDate: b.startDate }),
+      ...(b.targetPerDay !== undefined && { targetPerDay: b.targetPerDay }),
       ...(b.archived    !== undefined && { archived: b.archived }),
       ...(b.sortOrder   !== undefined && { sortOrder: b.sortOrder }),
     })

@@ -58,22 +58,31 @@ export default function TrackerPage() {
     return m
   }, [habits])
   // ── действия ────────────────────────────────────────────────────────────────
+  // отметить привычку за день. Для targetPerDay>1 — увеличивает счётчик на 1,
+  // по достижении цели следующий тап сбрасывает день в 0.
   const toggle = useCallback(async (h: Habit, day: string) => {
-    const done = !h.completions.includes(day)
-    setHabits(prev => prev.map(x => x.id === h.id
-      ? { ...x, completions: done ? [...x.completions, day] : x.completions.filter(d => d !== day) }
-      : x))
+    const target = h.targetPerDay || 1
+    const cur = h.counts?.[day] ?? 0
+    const next = cur >= target ? 0 : cur + 1
+    const apply = (habit: Habit, count: number): Habit => {
+      const counts = { ...(habit.counts ?? {}) }
+      if (count <= 0) delete counts[day]; else counts[day] = count
+      const full = count >= target
+      const completions = full
+        ? (habit.completions.includes(day) ? habit.completions : [...habit.completions, day])
+        : habit.completions.filter(d => d !== day)
+      return { ...habit, counts, completions }
+    }
+    setHabits(prev => prev.map(x => x.id === h.id ? apply(x, next) : x))
     if (navigator.vibrate) navigator.vibrate(12)
     try {
       await fetch('/api/tracker/completions', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ habitId: h.id, day, done }),
+        body: JSON.stringify({ habitId: h.id, day, count: next }),
       })
     } catch {
       showToast('Нет сети — не сохранилось')
-      setHabits(prev => prev.map(x => x.id === h.id
-        ? { ...x, completions: done ? x.completions.filter(d => d !== day) : [...x.completions, day] }
-        : x))
+      setHabits(prev => prev.map(x => x.id === h.id ? apply(x, cur) : x))
     }
   }, [showToast])
 
@@ -208,17 +217,29 @@ function HabitRow({ h, hc, today, onToggle, onOpen, notToday }: {
 }) {
   const done = h.completions.includes(today)
   const streak = Stats.currentStreak(hc, today)
+  const target = h.targetPerDay || 1
+  const count = h.counts?.[today] ?? 0
+  const multi = target > 1
   return (
     <div className={`tk-habit-row ${done ? 'tk-done' : ''} ${notToday ? 'tk-off tk-not-today' : ''}`}>
       <div className="tk-habit-emoji" style={{ color: h.color }} onClick={() => onOpen(h.id)}>{h.emoji}</div>
       <div className="tk-habit-main" onClick={() => onOpen(h.id)}>
         <div className="tk-habit-name">{h.name}</div>
         <div className="tk-habit-meta">
-          <span>{Stats.scheduleLabel(hc)}</span>
+          <span>{Stats.scheduleLabel(hc)}{multi ? ` · ${target} раза в день` : ''}</span>
           <span className={`tk-streak-chip ${streak ? '' : 'tk-zero'}`}>🔥 {streak}</span>
         </div>
       </div>
-      <button className={`tk-check ${done ? '' : 'tk-pending'}`} onClick={() => onToggle(h, today)} aria-label="Отметить"><Check /></button>
+      <button
+        className={`tk-check ${done ? '' : 'tk-pending'}`}
+        onClick={() => onToggle(h, today)}
+        aria-label="Отметить"
+        style={multi ? { position: 'relative' } : undefined}
+      >
+        {multi && !done
+          ? <span style={{ fontSize: 13, fontWeight: 800 }}>{count}/{target}</span>
+          : <Check />}
+      </button>
     </div>
   )
 }
@@ -253,11 +274,22 @@ function DetailView({ habit, hc, today, onBack, onToggle, onEdit, onArchive }: {
         </div>
       </div>
 
-      {(scheduledToday || done) && (
-        <button className={done ? 'tk-btn-ghost' : 'tk-btn-primary'} style={{ marginBottom: 20 }} onClick={() => onToggle(habit, today)}>
-          {done ? '✓ Сделано сегодня — отменить' : 'Отметить за сегодня'}
-        </button>
-      )}
+      {(scheduledToday || done) && (() => {
+        const target = habit.targetPerDay || 1
+        const count = habit.counts?.[today] ?? 0
+        if (target > 1) {
+          return (
+            <button className={done ? 'tk-btn-ghost' : 'tk-btn-primary'} style={{ marginBottom: 20 }} onClick={() => onToggle(habit, today)}>
+              {done ? `✓ Сегодня ${target}/${target} — сбросить` : `Отметить за сегодня · ${count}/${target}`}
+            </button>
+          )
+        }
+        return (
+          <button className={done ? 'tk-btn-ghost' : 'tk-btn-primary'} style={{ marginBottom: 20 }} onClick={() => onToggle(habit, today)}>
+            {done ? '✓ Сделано сегодня — отменить' : 'Отметить за сегодня'}
+          </button>
+        )
+      })()}
 
       <div className={`tk-desc-card ${habit.description ? '' : 'tk-empty-desc'}`}>
         {habit.description || 'Описание не заполнено. Нажми «Изменить», чтобы добавить — зачем эта привычка, как её выполнять.'}
@@ -402,11 +434,12 @@ function HabitSheet({ editing, today, onClose, onSave, onDelete }: {
   const [color, setColor] = useState(editing?.color ?? COLORS[0])
   const [schedule, setSchedule] = useState<Schedule>(editing?.schedule ?? { type: 'daily' })
   const [startDate, setStartDate] = useState(editing?.startDate ?? today)
+  const [targetPerDay, setTargetPerDay] = useState(editing?.targetPerDay ?? 1)
 
   const submit = () => {
     if (!name.trim()) return
     if (schedule.type === 'weekdays' && (!schedule.days || !schedule.days.length)) return
-    onSave({ name: name.trim(), description: description.trim(), emoji, color, schedule, startDate }, editing)
+    onSave({ name: name.trim(), description: description.trim(), emoji, color, schedule, startDate, targetPerDay }, editing)
   }
 
   const days = schedule.type === 'weekdays' ? schedule.days : []
@@ -444,6 +477,16 @@ function HabitSheet({ editing, today, onClose, onSave, onDelete }: {
             <button type="button" className={schedule.type === 'daily' ? 'tk-sel' : ''} onClick={() => setSchedule({ type: 'daily' })}>Каждый день</button>
             <button type="button" className={schedule.type === 'weekdays' ? 'tk-sel' : ''} onClick={() => setSchedule({ type: 'weekdays', days: schedule.type === 'weekdays' ? schedule.days : [1,3,5] })}>Дни недели</button>
             <button type="button" className={schedule.type === 'count' ? 'tk-sel' : ''} onClick={() => setSchedule({ type: 'count', perWeek: schedule.type === 'count' ? schedule.perWeek : 3 })}>N в неделю</button>
+          </div>
+        </div>
+
+        <div className="tk-field">
+          <label>Сколько раз в день</label>
+          <div className="tk-stepper">
+            <button type="button" onClick={() => setTargetPerDay(Math.max(1, targetPerDay - 1))}>−</button>
+            <span className="tk-val">{targetPerDay}</span>
+            <button type="button" onClick={() => setTargetPerDay(Math.min(20, targetPerDay + 1))}>+</button>
+            <span className="tk-cap">{targetPerDay === 1 ? 'один раз' : `${targetPerDay} ${plural(targetPerDay,'раз','раза','раз')} в день`}</span>
           </div>
         </div>
 

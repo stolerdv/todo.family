@@ -17,14 +17,18 @@ export interface Habit {
   archived: boolean
   sortOrder: number
   createdAt: string
-  completions: string[]    // список дат 'YYYY-MM-DD'
+  targetPerDay: number     // сколько раз в день нужно выполнить (1 = обычная привычка)
+  counts: Record<string, number> // день 'YYYY-MM-DD' → сколько раз отмечено
+  completions: string[]    // дни, где counts >= targetPerDay (день засчитан полностью)
 }
 
 function sql() {
   return neon(process.env.DATABASE_URL!)
 }
 
-function mapHabit(r: any, completions: string[] = []): Habit {
+function mapHabit(r: any, counts: Record<string, number> = {}): Habit {
+  const target = Number(r.target_per_day) || 1
+  const completions = Object.keys(counts).filter(day => counts[day] >= target).sort()
   return {
     id: r.id,
     userId: r.user_id,
@@ -37,6 +41,8 @@ function mapHabit(r: any, completions: string[] = []): Habit {
     archived: r.archived,
     sortOrder: r.sort_order ?? 0,
     createdAt: r.created_at,
+    targetPerDay: target,
+    counts,
     completions,
   }
 }
@@ -46,7 +52,7 @@ function mapHabit(r: any, completions: string[] = []): Habit {
 export async function getHabits(userId: string): Promise<Habit[]> {
   const rows = await sql()`
     SELECT id, user_id, name, description, emoji, color, schedule,
-           to_char(start_date, 'YYYY-MM-DD') AS start_date, archived, sort_order, created_at
+           to_char(start_date, 'YYYY-MM-DD') AS start_date, archived, sort_order, created_at, target_per_day
     FROM tracker_habits
     WHERE user_id = ${userId}
     ORDER BY sort_order, created_at`
@@ -54,24 +60,26 @@ export async function getHabits(userId: string): Promise<Habit[]> {
 
   const ids = rows.map((r: any) => r.id)
   const comp = await sql()`
-    SELECT habit_id, to_char(day, 'YYYY-MM-DD') AS day
+    SELECT habit_id, to_char(day, 'YYYY-MM-DD') AS day, count
     FROM tracker_completions
     WHERE habit_id = ANY(${ids})`
-  const byHabit: Record<string, string[]> = {}
-  for (const c of comp as any[]) (byHabit[c.habit_id] ??= []).push(c.day)
+  const byHabit: Record<string, Record<string, number>> = {}
+  for (const c of comp as any[]) ((byHabit[c.habit_id] ??= {})[c.day] = Number(c.count) || 1)
 
-  return rows.map((r: any) => mapHabit(r, byHabit[r.id] ?? []))
+  return rows.map((r: any) => mapHabit(r, byHabit[r.id] ?? {}))
 }
 
 export async function getHabit(id: string, userId: string): Promise<Habit | null> {
   const rows = await sql()`
     SELECT id, user_id, name, description, emoji, color, schedule,
-           to_char(start_date, 'YYYY-MM-DD') AS start_date, archived, sort_order, created_at
+           to_char(start_date, 'YYYY-MM-DD') AS start_date, archived, sort_order, created_at, target_per_day
     FROM tracker_habits WHERE id = ${id} AND user_id = ${userId} LIMIT 1`
   if (!rows[0]) return null
   const comp = await sql()`
-    SELECT to_char(day, 'YYYY-MM-DD') AS day FROM tracker_completions WHERE habit_id = ${id}`
-  return mapHabit(rows[0], (comp as any[]).map(c => c.day))
+    SELECT to_char(day, 'YYYY-MM-DD') AS day, count FROM tracker_completions WHERE habit_id = ${id}`
+  const counts: Record<string, number> = {}
+  for (const c of comp as any[]) counts[c.day] = Number(c.count) || 1
+  return mapHabit(rows[0], counts)
 }
 
 // ── Запись ────────────────────────────────────────────────────────────────────
@@ -83,19 +91,25 @@ export interface HabitInput {
   color?: string
   schedule?: Schedule
   startDate?: string
+  targetPerDay?: number
+}
+
+function clampTarget(n: unknown): number {
+  const v = Math.round(Number(n) || 1)
+  return Math.min(20, Math.max(1, v))
 }
 
 export async function createHabit(userId: string, h: HabitInput): Promise<Habit> {
   const rows = await sql()`
-    INSERT INTO tracker_habits (user_id, name, description, emoji, color, schedule, start_date)
+    INSERT INTO tracker_habits (user_id, name, description, emoji, color, schedule, start_date, target_per_day)
     VALUES (
       ${userId}, ${h.name}, ${h.description ?? ''}, ${h.emoji ?? '✅'}, ${h.color ?? '#6d8bff'},
       ${JSON.stringify(h.schedule ?? { type: 'daily' })}::jsonb,
-      ${h.startDate ?? null}::date
+      ${h.startDate ?? null}::date, ${clampTarget(h.targetPerDay)}
     )
     RETURNING id, user_id, name, description, emoji, color, schedule,
-              to_char(start_date, 'YYYY-MM-DD') AS start_date, archived, sort_order, created_at`
-  return mapHabit(rows[0], [])
+              to_char(start_date, 'YYYY-MM-DD') AS start_date, archived, sort_order, created_at, target_per_day`
+  return mapHabit(rows[0], {})
 }
 
 export async function updateHabit(
@@ -109,6 +123,7 @@ export async function updateHabit(
   if (f.color       !== undefined) await sql()`UPDATE tracker_habits SET color       = ${f.color}       WHERE id = ${id} AND user_id = ${userId}`
   if (f.schedule    !== undefined) await sql()`UPDATE tracker_habits SET schedule    = ${JSON.stringify(f.schedule)}::jsonb WHERE id = ${id} AND user_id = ${userId}`
   if (f.startDate   !== undefined) await sql()`UPDATE tracker_habits SET start_date  = ${f.startDate}::date WHERE id = ${id} AND user_id = ${userId}`
+  if (f.targetPerDay !== undefined) await sql()`UPDATE tracker_habits SET target_per_day = ${clampTarget(f.targetPerDay)} WHERE id = ${id} AND user_id = ${userId}`
   if (f.archived    !== undefined) await sql()`UPDATE tracker_habits SET archived    = ${f.archived}    WHERE id = ${id} AND user_id = ${userId}`
   if (f.sortOrder   !== undefined) await sql()`UPDATE tracker_habits SET sort_order  = ${f.sortOrder}   WHERE id = ${id} AND user_id = ${userId}`
 }
@@ -119,18 +134,33 @@ export async function deleteHabit(id: string, userId: string): Promise<void> {
 
 // ── Отметки ───────────────────────────────────────────────────────────────────
 
-// Возвращает true если отметка стоит после операции
+// Устанавливает число выполнений привычки за день (0 = снять отметку).
+// Число зажимается в [0, targetPerDay]. Возвращает итог: сколько отмечено и засчитан ли день.
+export async function setCount(
+  habitId: string, userId: string, day: string, count: number,
+): Promise<{ count: number; done: boolean }> {
+  const own = await sql()`SELECT target_per_day FROM tracker_habits WHERE id = ${habitId} AND user_id = ${userId} LIMIT 1`
+  if (!own[0]) throw new Error('not found')
+  const target = Number((own[0] as any).target_per_day) || 1
+  const c = Math.min(target, Math.max(0, Math.round(Number(count) || 0)))
+
+  if (c <= 0) {
+    await sql()`DELETE FROM tracker_completions WHERE habit_id = ${habitId} AND day = ${day}::date`
+    return { count: 0, done: false }
+  }
+  await sql()`
+    INSERT INTO tracker_completions (habit_id, day, count) VALUES (${habitId}, ${day}::date, ${c})
+    ON CONFLICT (habit_id, day) DO UPDATE SET count = ${c}`
+  return { count: c, done: c >= target }
+}
+
+// Обратная совместимость: отметить/снять целиком (для привычек с targetPerDay = 1).
 export async function setCompletion(
   habitId: string, userId: string, day: string, done: boolean,
 ): Promise<boolean> {
-  // проверяем принадлежность привычки пользователю
-  const own = await sql()`SELECT 1 FROM tracker_habits WHERE id = ${habitId} AND user_id = ${userId} LIMIT 1`
+  const own = await sql()`SELECT target_per_day FROM tracker_habits WHERE id = ${habitId} AND user_id = ${userId} LIMIT 1`
   if (!own[0]) throw new Error('not found')
-
-  if (done) {
-    await sql()`INSERT INTO tracker_completions (habit_id, day) VALUES (${habitId}, ${day}::date) ON CONFLICT (habit_id, day) DO NOTHING`
-    return true
-  }
-  await sql()`DELETE FROM tracker_completions WHERE habit_id = ${habitId} AND day = ${day}::date`
-  return false
+  const target = Number((own[0] as any).target_per_day) || 1
+  const r = await setCount(habitId, userId, day, done ? target : 0)
+  return r.done
 }
