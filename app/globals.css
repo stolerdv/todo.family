@@ -2,6 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
+@keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+@keyframes slideUp { from { transform: translateY(100%) } to { transform: none } }
+
 @layer utilities {
   .pt-safe {
     padding-top: env(safe-area-inset-top);

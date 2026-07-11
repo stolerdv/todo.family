@@ -1,7 +1,9 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import type { Task, Section, Subtask } from '@/lib/db'
+import type { Task, Section, Subtask, CalEvent } from '@/lib/db'
+
+type EventDraft = { day: string; time: string; endTime: string; title: string; note: string }
 
 const PRIORITY_COLOR: Record<string, string> = {
   Critical: 'bg-red-400',
@@ -24,14 +26,22 @@ interface Props {
   tasks: Task[]
   sections: Section[]
   subtasks: Subtask[]
+  events: CalEvent[]
   onTaskClick: (taskId: string, sectionId: string) => void
-  onAddEvent?: (day: string, title: string) => void
+  onAddEvent: (draft: EventDraft) => void
+  onDeleteEvent: (id: string) => void
 }
 
-export default function Dashboard({ tasks, sections, subtasks, onTaskClick, onAddEvent }: Props) {
+export default function Dashboard({ tasks, sections, subtasks, events, onTaskClick, onAddEvent, onDeleteEvent }: Props) {
   const [currentDate, setCurrentDate] = useState(new Date())
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
-  const [eventTitle, setEventTitle] = useState('')
+  const [sheetDay, setSheetDay] = useState<string | null>(null) // открытая шторка добавления события
+
+  const eventsByDay = useMemo(() => {
+    const map: Record<string, CalEvent[]> = {}
+    for (const e of events) (map[e.day] ??= []).push(e)
+    return map
+  }, [events])
 
   const today = new Date(); today.setHours(0,0,0,0)
   const todayStr = today.toISOString().slice(0, 10)
@@ -46,17 +56,6 @@ export default function Dashboard({ tasks, sections, subtasks, onTaskClick, onAd
   const startDow = (firstDay.getDay() + 6) % 7 // Mon=0
   const totalCells = Math.ceil((startDow + lastDay.getDate()) / 7) * 7
 
-  const tasksByDate = useMemo(() => {
-    const map: Record<string, Task[]> = {}
-    activeTasks.forEach(t => {
-      if (t.dueDate) {
-        if (!map[t.dueDate]) map[t.dueDate] = []
-        map[t.dueDate].push(t)
-      }
-    })
-    return map
-  }, [activeTasks])
-
   // Buckets
   const overdue  = activeTasks.filter(t => t.dueDate && t.dueDate < todayStr)
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
@@ -69,7 +68,7 @@ export default function Dashboard({ tasks, sections, subtasks, onTaskClick, onAd
     .sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority])
     .slice(0, 12)
 
-  const selectedDayTasks = selectedDay ? (tasksByDate[selectedDay] ?? []) : []
+  const selectedDayEvents = selectedDay ? (eventsByDay[selectedDay] ?? []) : []
 
   function dayStr(cellIdx: number): string | null {
     const dayNum = cellIdx - startDow + 1
@@ -117,7 +116,6 @@ export default function Dashboard({ tasks, sections, subtasks, onTaskClick, onAd
 
   // Stats
   const totalActive  = activeTasks.length
-  const doneToday    = tasks.filter(t => DONE_STATES.includes(t.state) && t.createdAt?.slice(0,10) === todayStr).length
   const overdueCount = overdue.length
   const criticalCount = activeTasks.filter(t => t.priority === 'Critical').length
 
@@ -160,26 +158,26 @@ export default function Dashboard({ tasks, sections, subtasks, onTaskClick, onAd
             {Array.from({ length: totalCells }).map((_, i) => {
               const ds = dayStr(i)
               if (!ds) return <div key={i} />
-              const dayTasks = tasksByDate[ds] ?? []
+              const dayEvents = eventsByDay[ds] ?? []
               const isToday = ds === todayStr
               const isSelected = ds === selectedDay
               const isPast = ds < todayStr
               const dayNum = parseInt(ds.slice(8))
-              const dots = dayTasks.slice(0, 3)
+              const dots = dayEvents.slice(0, 3)
 
               return (
                 <button key={i} onClick={() => setSelectedDay(isSelected ? null : ds)}
                   className={`relative flex flex-col items-center py-1.5 rounded-xl transition ${
                     isSelected ? 'bg-accent-600 text-[#120a00]' :
                     isToday    ? 'bg-accent-500/20 text-accent-300 font-semibold' :
-                    isPast     ? 'text-gray-700' : 'text-gray-300 hover:bg-gray-800'
+                    isPast     ? 'text-gray-600' : 'text-gray-300 hover:bg-gray-800'
                   }`}
                 >
                   <span className="text-xs leading-none">{dayNum}</span>
                   {dots.length > 0 && (
                     <div className="flex gap-0.5 mt-1">
-                      {dots.map((t, ti) => (
-                        <span key={ti} className={`w-1 h-1 rounded-full ${isSelected ? 'bg-white' : PRIORITY_COLOR[t.priority]}`} />
+                      {dots.map((_, ti) => (
+                        <span key={ti} className={`w-1 h-1 rounded-full ${isSelected ? 'bg-[#120a00]' : 'bg-accent-400'}`} />
                       ))}
                     </div>
                   )}
@@ -188,26 +186,29 @@ export default function Dashboard({ tasks, sections, subtasks, onTaskClick, onAd
             })}
           </div>
 
-          {/* Selected day: tasks + add event */}
+          {/* Selected day: события + кнопка добавления */}
           {selectedDay && (
             <div className="mt-4 border-t border-gray-800/80 pt-3">
               <p className="text-xs text-gray-500 mb-2 capitalize">
                 {new Date(selectedDay + 'T12:00').toLocaleDateString('ru', { weekday: 'long', day: 'numeric', month: 'long' })}
               </p>
-              <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                {selectedDayTasks.map(t => <TaskPill key={t.id} task={t} />)}
+              <div className="space-y-1.5 max-h-56 overflow-y-auto mb-3">
+                {selectedDayEvents.length === 0 && <p className="text-sm text-gray-600 py-1">Свободно — событий нет.</p>}
+                {selectedDayEvents.map(ev => (
+                  <div key={ev.id} className="group flex items-center gap-2.5 bg-white/[0.03] border border-white/[0.07] rounded-xl px-3 py-2.5">
+                    <span className="text-xs font-bold text-accent-400 tabular-nums w-11 shrink-0">{ev.time || 'весь день'}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-gray-200 truncate">{ev.title}</p>
+                      {(ev.endTime || ev.note) && <p className="text-xs text-gray-500 truncate">{ev.endTime ? `до ${ev.endTime}` : ''}{ev.endTime && ev.note ? ' · ' : ''}{ev.note}</p>}
+                    </div>
+                    <button onClick={() => onDeleteEvent(ev.id)} className="text-gray-600 hover:text-red-400 text-sm px-1 transition shrink-0" aria-label="Удалить">✕</button>
+                  </div>
+                ))}
               </div>
-              {onAddEvent && (
-                <div className="mt-2 flex items-center gap-2">
-                  <input value={eventTitle} onChange={e => setEventTitle(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter' && eventTitle.trim()) { onAddEvent(selectedDay, eventTitle.trim()); setEventTitle('') } }}
-                    placeholder="+ Добавить событие на этот день"
-                    className="flex-1 bg-white/[0.04] border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 outline-none transition focus:border-accent-500 focus:bg-white/[0.06]" />
-                  <button onClick={() => { if (eventTitle.trim()) { onAddEvent(selectedDay, eventTitle.trim()); setEventTitle('') } }}
-                    disabled={!eventTitle.trim()}
-                    className="bg-accent-600 hover:bg-accent-500 text-[#120a00] font-semibold disabled:opacity-40 text-sm px-4 py-2 rounded-lg transition active:scale-95">Добавить</button>
-                </div>
-              )}
+              <button onClick={() => setSheetDay(selectedDay)}
+                className="w-full bg-accent-600 hover:bg-accent-500 text-[#120a00] font-semibold text-sm py-2.5 rounded-xl transition active:scale-[.98]">
+                + Добавить событие
+              </button>
             </div>
           )}
         </div>
@@ -263,6 +264,83 @@ export default function Dashboard({ tasks, sections, subtasks, onTaskClick, onAd
       )}
 
       <div className="pb-safe" />
+
+      {sheetDay && (
+        <EventSheet
+          day={sheetDay}
+          onClose={() => setSheetDay(null)}
+          onSave={draft => { onAddEvent(draft); setSheetDay(null) }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── Шторка добавления события (время, название, заметка) ─────────────────────────
+function EventSheet({ day, onClose, onSave }: { day: string; onClose: () => void; onSave: (d: EventDraft) => void }) {
+  const [title, setTitle] = useState('')
+  const [allDay, setAllDay] = useState(false)
+  const [time, setTime] = useState('12:00')
+  const [endTime, setEndTime] = useState('')
+  const [note, setNote] = useState('')
+
+  const dayLabel = new Date(day + 'T12:00').toLocaleDateString('ru', { weekday: 'long', day: 'numeric', month: 'long' })
+  const canSave = title.trim().length > 0
+
+  const save = () => {
+    if (!canSave) return
+    onSave({ day, time: allDay ? '' : time, endTime: allDay ? '' : endTime, title: title.trim(), note: note.trim() })
+  }
+
+  return (
+    <div className="fixed inset-0 z-[120] flex items-end md:items-center justify-center">
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm animate-[fadeIn_.2s_ease]" onClick={onClose} />
+      <div className="relative w-full max-w-md rounded-t-3xl md:rounded-3xl border border-white/10 p-6 pb-8"
+        style={{ background: 'linear-gradient(160deg, #161618, #0b0b0c)', boxShadow: '0 -20px 60px -20px rgba(0,0,0,.8)', animation: 'slideUp .3s cubic-bezier(.2,.9,.3,1)' }}>
+        <div className="w-10 h-1 rounded-full bg-white/15 mx-auto mb-5 md:hidden" />
+        <h2 className="text-lg font-bold text-white mb-0.5">Новое событие</h2>
+        <p className="text-xs text-accent-400/80 capitalize mb-5">{dayLabel}</p>
+
+        <label className="block text-xs font-semibold text-gray-400 mb-1.5">Название</label>
+        <input autoFocus value={title} onChange={e => setTitle(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && canSave) save() }}
+          placeholder="Например: Встреча, тренировка, врач…"
+          className="w-full bg-white/[0.04] border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 outline-none transition focus:border-accent-500 focus:bg-white/[0.06] mb-4" />
+
+        <div className="flex items-center justify-between mb-3">
+          <label className="text-xs font-semibold text-gray-400">Время</label>
+          <button type="button" onClick={() => setAllDay(v => !v)}
+            className={`text-xs px-3 py-1.5 rounded-full border transition ${allDay ? 'bg-accent-500/20 border-accent-500/40 text-accent-300' : 'border-white/10 text-gray-400'}`}>
+            Весь день
+          </button>
+        </div>
+        {!allDay && (
+          <div className="flex items-center gap-3 mb-4">
+            <div className="flex-1">
+              <span className="block text-[11px] text-gray-500 mb-1">Начало</span>
+              <input type="time" value={time} onChange={e => setTime(e.target.value)}
+                className="w-full bg-white/[0.04] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-accent-500 [color-scheme:dark]" />
+            </div>
+            <div className="flex-1">
+              <span className="block text-[11px] text-gray-500 mb-1">Конец (необязательно)</span>
+              <input type="time" value={endTime} onChange={e => setEndTime(e.target.value)}
+                className="w-full bg-white/[0.04] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-accent-500 [color-scheme:dark]" />
+            </div>
+          </div>
+        )}
+
+        <label className="block text-xs font-semibold text-gray-400 mb-1.5">Заметка (необязательно)</label>
+        <textarea value={note} onChange={e => setNote(e.target.value)} rows={2}
+          placeholder="Место, детали…"
+          className="w-full bg-white/[0.04] border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 outline-none transition focus:border-accent-500 focus:bg-white/[0.06] resize-none mb-6" />
+
+        <div className="flex gap-3">
+          <button onClick={onClose} className="flex-1 border border-white/10 text-gray-300 font-medium py-3 rounded-xl transition hover:bg-white/[0.04]">Отмена</button>
+          <button onClick={save} disabled={!canSave}
+            className="flex-1 bg-accent-600 hover:bg-accent-500 text-[#120a00] font-bold py-3 rounded-xl transition active:scale-[.98] disabled:opacity-40"
+            style={{ boxShadow: canSave ? '0 10px 30px -8px rgba(255,122,26,.5)' : 'none' }}>Сохранить</button>
+        </div>
+      </div>
     </div>
   )
 }

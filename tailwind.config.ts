@@ -1,4 +1,5 @@
 import type { Config } from 'tailwindcss'
+import colors from 'tailwindcss/colors'
 
 const config: Config = {
   content: [
@@ -9,6 +10,9 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        // gray у Tailwind по умолчанию холодный (синий подтон) — на чёрном фоне
+        // весь серый текст читался голубоватым. Меняем на нейтральный (без синевы).
+        gray: colors.neutral,
         // янтарный акцент приложения (единственный цвет на чёрно-белой базе)
         accent: {
           300: '#ffc182',

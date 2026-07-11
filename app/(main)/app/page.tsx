@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import type { Section, Task, TaskState, Subtask, Priority, Comment } from '@/lib/db'
+import type { Section, Task, TaskState, Subtask, Priority, Comment, CalEvent } from '@/lib/db'
 import Dashboard from '@/components/Dashboard'
 
 const STATES: TaskState[] = ['Todo', 'In Progress', 'Review', 'Blocked', 'Done', 'Cancelled', 'Deferred', 'Delegated']
@@ -54,6 +54,7 @@ export default function AppPage() {
   const [tasks, setTasks]       = useState<Task[]>([])
   const [subtasks, setSubtasks] = useState<Subtask[]>([])
   const [comments, setComments] = useState<Comment[]>([])
+  const [events, setEvents] = useState<CalEvent[]>([])
   const [activeSection, setActiveSection] = useState<string | null>(null)
   const [expandedTask, setExpandedTask]   = useState<string | null>(null)
   const [showDone, setShowDone]           = useState(false)
@@ -89,13 +90,14 @@ export default function AppPage() {
 
   async function loadData() {
     setLoading(true)
-    const [s, t, st, me] = await Promise.all([
+    const [s, t, st, me, ev] = await Promise.all([
       fetch('/api/sections').then(r => r.json()),
       fetch('/api/tasks').then(r => r.json()),
       fetch('/api/subtasks').then(r => r.json()),
       fetch('/api/me').then(r => r.json()),
+      fetch('/api/events').then(r => r.json()),
     ])
-    setSections(s); setTasks(t); setSubtasks(st)
+    setSections(s); setTasks(t); setSubtasks(st); setEvents(Array.isArray(ev) ? ev : [])
     setUsername(me.username ?? ''); setUserId(me.userId ?? '')
     setActiveSection((a: string | null) => a ?? HOME_VIEW_ID)
     setLoading(false)
@@ -240,29 +242,18 @@ export default function AppPage() {
   const isPriorityView = activeSection === PRIORITY_VIEW_ID
   const isArchiveView  = activeSection === ARCHIVE_VIEW_ID
 
-  // создать «мероприятие» — задачу с дедлайном на выбранный день.
-  // Если разделов ещё нет (или не выбран) — сам создаёт раздел «Мои дела».
-  async function addEvent(day: string, title: string, sectionId: string) {
-    if (!title.trim()) return
-    let secId = sectionId || activeSections[0]?.id || ''
-    if (!secId) {
-      try {
-        const res = await fetch('/api/sections', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Мои дела' }) })
-        const sec: Section = await res.json()
-        setSections(prev => [...prev, sec])
-        secId = sec.id
-      } catch { return }
-    }
-    const tempId = `temp-${Date.now()}`
-    setTasks(prev => [...prev, { id: tempId, sectionId: secId, title: title.trim(), state: 'Todo', createdAt: '', priority: 'None', dueDate: day }])
-    try {
-      const res = await fetch('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sectionId: secId, title: title.trim() }) })
-      const created: Task = await res.json()
-      await fetch(`/api/tasks/${created.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dueDate: day }) })
-      setTasks(prev => prev.map(t => t.id === tempId ? { ...created, dueDate: day } : t))
-    } catch {
-      setTasks(prev => prev.filter(t => t.id !== tempId))
-    }
+  // ── Календарь событий (занятость) — отдельно от задач ──────────────────────────
+  async function addEvent(data: { day: string; time: string; endTime: string; title: string; note: string }) {
+    if (!data.title.trim()) return
+    const res = await fetch('/api/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+    if (!res.ok) return
+    const created: CalEvent = await res.json()
+    setEvents(prev => [...prev, created])
+  }
+
+  async function removeEvent(id: string) {
+    setEvents(prev => prev.filter(e => e.id !== id))
+    await fetch(`/api/events/${id}`, { method: 'DELETE' })
   }
 
   const sectionTasks = isPriorityView
@@ -865,7 +856,9 @@ export default function AppPage() {
                 setExpandedTask(taskId)
                 setSidebarOpen(false)
               }}
-              onAddEvent={(day, title) => addEvent(day, title, '')}
+              events={events}
+              onAddEvent={addEvent}
+              onDeleteEvent={removeEvent}
             />
           </>
         ) : activeSection ? mainContent : (
