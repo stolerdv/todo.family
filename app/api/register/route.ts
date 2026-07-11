@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { hashPassword, signToken } from '@/lib/auth'
+import { signToken } from '@/lib/auth'
+import { hashPassword } from '@/lib/password'
 import { findUserByUsername, createUser } from '@/lib/db'
 
 export async function POST(req: NextRequest) {
   const { username, password } = await req.json()
 
-  if (!username?.trim() || !password || password.length < 4) {
-    return NextResponse.json({ error: 'Логин и пароль (мин. 4 символа) обязательны' }, { status: 400 })
+  if (!username?.trim() || !password || password.length < 6) {
+    return NextResponse.json({ error: 'Логин и пароль (мин. 6 символов) обязательны' }, { status: 400 })
   }
 
   const existing = await findUserByUsername(username.trim())
