@@ -270,13 +270,24 @@ export default function AppPage() {
   const isArchiveView  = activeSection === ARCHIVE_VIEW_ID
   const isCalendarView = activeSection === CALENDAR_VIEW_ID
 
-  // создать «мероприятие» — задачу с дедлайном на выбранный день (в первый/выбранный раздел)
+  // создать «мероприятие» — задачу с дедлайном на выбранный день.
+  // Если разделов ещё нет (или не выбран) — сам создаёт раздел «Мои дела».
   async function addEvent(day: string, title: string, sectionId: string) {
-    if (!title.trim() || !sectionId) return
+    if (!title.trim()) return
+    let secId = sectionId || activeSections[0]?.id || ''
+    if (!secId) {
+      try {
+        const res = await fetch('/api/sections', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Мои дела' }) })
+        const sec: Section = await res.json()
+        setSections(prev => [...prev, sec])
+        setCalSection(sec.id)
+        secId = sec.id
+      } catch { return }
+    }
     const tempId = `temp-${Date.now()}`
-    setTasks(prev => [...prev, { id: tempId, sectionId, title: title.trim(), state: 'Todo', createdAt: '', priority: 'None', dueDate: day }])
+    setTasks(prev => [...prev, { id: tempId, sectionId: secId, title: title.trim(), state: 'Todo', createdAt: '', priority: 'None', dueDate: day }])
     try {
-      const res = await fetch('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sectionId, title: title.trim() }) })
+      const res = await fetch('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sectionId: secId, title: title.trim() }) })
       const created: Task = await res.json()
       await fetch(`/api/tasks/${created.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dueDate: day }) })
       setTasks(prev => prev.map(t => t.id === tempId ? { ...created, dueDate: day } : t))
@@ -922,24 +933,23 @@ export default function AppPage() {
             })}
           </div>
 
-          {activeSections.length > 0 ? (
-            <div className="mt-3 border border-accent-500/30 bg-gray-900 rounded-xl px-3 py-2.5">
-              <input value={calNewTitle} onChange={e => setCalNewTitle(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter' && calNewTitle.trim()) { addEvent(calSelected, calNewTitle, calAddSection); setCalNewTitle('') } }}
-                placeholder="Добавить мероприятие…" className="w-full bg-transparent outline-none text-sm placeholder-gray-600 text-gray-200 mb-2" />
-              <div className="flex items-center gap-2">
+          <div className="mt-3 border border-accent-500/30 bg-white/[0.03] rounded-xl px-3 py-2.5">
+            <input value={calNewTitle} onChange={e => setCalNewTitle(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && calNewTitle.trim()) { addEvent(calSelected, calNewTitle, calAddSection); setCalNewTitle('') } }}
+              placeholder="Добавить мероприятие на этот день…" className="w-full bg-transparent outline-none text-sm placeholder-gray-500 text-gray-200 mb-2" />
+            <div className="flex items-center gap-2">
+              {activeSections.length > 0 && (
                 <select value={calAddSection} onChange={e => setCalSection(e.target.value)}
-                  className="flex-1 bg-gray-800 text-gray-300 text-xs rounded-lg px-2 py-1.5 outline-none border border-gray-700">
+                  className="flex-1 bg-white/[0.05] text-gray-300 text-xs rounded-lg px-2 py-1.5 outline-none border border-white/10">
                   {activeSections.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
-                <button onClick={() => { if (calNewTitle.trim()) { addEvent(calSelected, calNewTitle, calAddSection); setCalNewTitle('') } }}
-                  disabled={!calNewTitle.trim()}
-                  className="bg-accent-600 hover:bg-accent-500 text-[#120a00] font-semibold disabled:opacity-40 text-xs font-medium px-4 py-1.5 rounded-lg transition">Добавить</button>
-              </div>
+              )}
+              {activeSections.length === 0 && <span className="flex-1 text-[11px] text-gray-600">Раздел «Мои дела» создастся сам</span>}
+              <button onClick={() => { if (calNewTitle.trim()) { addEvent(calSelected, calNewTitle, calAddSection); setCalNewTitle('') } }}
+                disabled={!calNewTitle.trim()}
+                className="bg-accent-600 hover:bg-accent-500 text-[#120a00] font-semibold disabled:opacity-40 text-xs px-4 py-1.5 rounded-lg transition active:scale-95">Добавить</button>
             </div>
-          ) : (
-            <p className="text-gray-600 text-xs mt-3 px-1">Сначала создай раздел, чтобы добавлять мероприятия.</p>
-          )}
+          </div>
         </div>
         <div className="pb-safe" />
       </div>

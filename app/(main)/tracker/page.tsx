@@ -6,7 +6,7 @@ import { Dates, Stats, toCalc, plural, hexA, type HabitCalc } from '@/lib/tracke
 import './tracker.css'
 
 const EMOJIS = ['✅','💪','🏃','📚','💧','🧘','🛌','🥗','☀️','🚭','🧠','✍️','🎯','🎸','💊','🦷','🚶','🏊','🚴','🍎','☕','🌿','📵','💰','🧹','❤️','🙏','🎨','🇬🇧','⏰']
-const COLORS = ['#6d8bff','#9a7bff','#3ddc97','#ffb454','#ff6b6b','#ff8a3d','#4dd0e1','#f06292','#a1e34a','#b0bec5']
+const ACCENT = '#ff7a1a' // единый янтарный акцент (моно-тема, без разноцветных привычек)
 
 type View = { name: 'today' | 'stats' | 'detail'; id?: string; back?: 'today' | 'stats' }
 
@@ -254,7 +254,7 @@ function HabitRow({ h, hc, today, onToggle, onOpen, notToday }: {
   const multi = target > 1
   return (
     <div className={`tk-habit-row ${done ? 'tk-done' : ''} ${notToday ? 'tk-off tk-not-today' : ''}`}>
-      <div className="tk-habit-emoji" style={{ color: h.color }} onClick={() => onOpen(h.id)}>{h.emoji}</div>
+      <div className="tk-habit-emoji" style={{ color: ACCENT }} onClick={() => onOpen(h.id)}>{h.emoji}</div>
       <div className="tk-habit-main" onClick={() => onOpen(h.id)}>
         <div className="tk-habit-name">{h.name}</div>
         <div className="tk-habit-meta">
@@ -266,7 +266,7 @@ function HabitRow({ h, hc, today, onToggle, onOpen, notToday }: {
         className={`tk-check ${done ? '' : (multi ? 'tk-multi' : 'tk-pending')}`}
         onClick={() => onToggle(h, today)}
         aria-label="Отметить"
-        style={multi && !done ? ({ ['--p']: count / target, ['--ring']: h.color } as CSSProperties) : undefined}
+        style={multi && !done ? ({ ['--p']: count / target, ['--ring']: ACCENT } as CSSProperties) : undefined}
       >
         {multi && !done
           ? <span key={count} className="tk-count">{count}/{target}</span>
@@ -299,7 +299,7 @@ function DetailView({ habit, hc, today, onBack, onToggle, onEdit, onArchive }: {
         Назад
       </button>
       <div className="tk-detail-hero">
-        <div className="tk-emoji" style={{ background: hexA(habit.color, .16), color: habit.color }}>{habit.emoji}</div>
+        <div className="tk-emoji" style={{ background: hexA(ACCENT, .16), color: ACCENT }}>{habit.emoji}</div>
         <div>
           <h1>{habit.name}</h1>
           <div className="tk-sub">{Stats.scheduleLabel(hc)} · с {Dates.humanShort(habit.startDate)}</div>
@@ -341,7 +341,7 @@ function DetailView({ habit, hc, today, onBack, onToggle, onEdit, onArchive }: {
           {cells.map((c, i) => {
             let bg = 'var(--tk-card-2)'
             if (c.future || c.beforeStart) bg = 'transparent'
-            else if (c.done) bg = habit.color
+            else if (c.done) bg = ACCENT
             else if (c.scheduled) bg = 'color-mix(in srgb, var(--tk-danger) 22%, var(--tk-card-2))'
             return <div key={i} className="tk-heat-cell" title={c.key} style={{ background: bg }} />
           })}
@@ -350,8 +350,8 @@ function DetailView({ habit, hc, today, onBack, onToggle, onEdit, onArchive }: {
           <span>меньше</span>
           <div className="tk-cells">
             <div className="tk-heat-cell" style={{ background: 'var(--tk-card-2)' }} />
-            <div className="tk-heat-cell" style={{ background: hexA(habit.color, .4) }} />
-            <div className="tk-heat-cell" style={{ background: habit.color }} />
+            <div className="tk-heat-cell" style={{ background: hexA(ACCENT, .4) }} />
+            <div className="tk-heat-cell" style={{ background: ACCENT }} />
           </div>
           <span>больше</span>
         </div>
@@ -365,7 +365,7 @@ function DetailView({ habit, hc, today, onBack, onToggle, onEdit, onArchive }: {
             {weeks.map((w, i) => (
               <div key={i} className="tk-bar-col">
                 <div className="tk-bar-val">{w.count || ''}</div>
-                <div className="tk-bar" style={{ height: `${(w.count / maxBar) * 100}%`, background: `linear-gradient(180deg, ${habit.color}, ${hexA(habit.color, .5)})` }} />
+                <div className="tk-bar" style={{ height: `${(w.count / maxBar) * 100}%`, background: `linear-gradient(180deg, ${ACCENT}, ${hexA(ACCENT, .5)})` }} />
                 <div className="tk-bar-lbl">{Dates.humanShort(w.weekStart)}</div>
               </div>
             ))}
@@ -449,13 +449,13 @@ function StatsView({ active, calc, today, onOpen, onAdd, onRestore, onDelete }: 
           <p className="tk-hint">Отсортировано по текущей серии.</p>
           {ranked.map(r => (
             <div key={r.h.id} className="tk-rank-row" onClick={() => onOpen(r.h.id)}>
-              <div className="tk-emoji" style={{ background: hexA(r.h.color, .16), color: r.h.color }}>{r.h.emoji}</div>
+              <div className="tk-emoji" style={{ background: hexA(ACCENT, .16), color: ACCENT }}>{r.h.emoji}</div>
               <div className="tk-nm">
                 <b>{r.h.name}</b>
                 <span>🔥 {r.streak} · {Stats.scheduleLabel(r.hc)}</span>
-                <div className="tk-mini-track"><div className="tk-mini-fill" style={{ width: `${r.rate}%`, background: r.h.color }} /></div>
+                <div className="tk-mini-track"><div className="tk-mini-fill" style={{ width: `${r.rate}%`, background: ACCENT }} /></div>
               </div>
-              <div className="tk-pct" style={{ color: r.h.color }}>{r.rate}%</div>
+              <div className="tk-pct" style={{ color: ACCENT }}>{r.rate}%</div>
             </div>
           ))}
         </div>
@@ -482,7 +482,7 @@ function HabitSheet({ editing, today, onClose, onSave, onDelete }: {
   const [name, setName] = useState(editing?.name ?? '')
   const [description, setDescription] = useState(editing?.description ?? '')
   const [emoji, setEmoji] = useState(editing?.emoji ?? '✅')
-  const [color, setColor] = useState(editing?.color ?? COLORS[0])
+  const color = editing?.color ?? ACCENT
   const [schedule, setSchedule] = useState<Schedule>(editing?.schedule ?? { type: 'daily' })
   const [startDate, setStartDate] = useState(editing?.startDate ?? today)
   const [targetPerDay, setTargetPerDay] = useState(editing?.targetPerDay ?? 1)
@@ -513,13 +513,6 @@ function HabitSheet({ editing, today, onClose, onSave, onDelete }: {
           <label>Иконка</label>
           <div className="tk-emoji-picker">
             {EMOJIS.map(e => <button key={e} type="button" className={`tk-emoji-opt ${e === emoji ? 'tk-sel' : ''}`} onClick={() => setEmoji(e)}>{e}</button>)}
-          </div>
-        </div>
-
-        <div className="tk-field">
-          <label>Цвет</label>
-          <div className="tk-color-row">
-            {COLORS.map(c => <button key={c} type="button" className={`tk-color-dot ${c === color ? 'tk-sel' : ''}`} style={{ background: c }} onClick={() => setColor(c)} />)}
           </div>
         </div>
 
