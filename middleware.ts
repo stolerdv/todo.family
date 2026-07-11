@@ -24,5 +24,6 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  // не трогаем статику, манифест и иконки — они должны быть публичными (иначе PWA-иконка не грузится без входа)
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|.*\\.(?:png|jpg|jpeg|gif|svg|webp|ico|webmanifest)$).*)'],
 }

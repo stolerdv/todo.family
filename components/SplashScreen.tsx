@@ -9,7 +9,7 @@ export default function SplashScreen() {
   useEffect(() => {
     // Preload image first
     const img = new Image()
-    img.src = '/couple.jpg'
+    img.src = '/icon-512.png'
     img.onload = () => setImgLoaded(true)
     img.onerror = () => setImgLoaded(true) // show anyway even if fails
 
@@ -35,12 +35,12 @@ export default function SplashScreen() {
         style={{ transition: 'transform 0.7s ease, opacity 0.7s ease' }}
         className={`mb-6 ${visible && imgLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}`}
       >
-        <div className="w-28 h-28 rounded-full overflow-hidden border-2 border-white/10 shadow-2xl">
+        <div className="w-28 h-28 rounded-[26px] overflow-hidden border border-white/10 shadow-2xl bg-black">
           {imgLoaded ? (
             <img
-              src="/couple.jpg"
+              src="/icon-512.png"
               alt=""
-              className="w-full h-full object-cover object-top"
+              className="w-full h-full object-cover"
             />
           ) : (
             <div className="w-full h-full bg-gray-800 animate-pulse" />
@@ -53,8 +53,8 @@ export default function SplashScreen() {
         style={{ transition: 'transform 0.7s ease 0.15s, opacity 0.7s ease 0.15s' }}
         className={`flex flex-col items-center gap-1.5 ${visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}`}
       >
-        <h1 className="text-3xl font-bold tracking-widest text-white">Todo Family</h1>
-        <p className="text-sm text-gray-500 tracking-[0.2em] uppercase">Список дел</p>
+        <h1 className="text-4xl font-bold tracking-[0.3em] text-white pl-[0.3em]">Pen</h1>
+        <p className="text-xs text-gray-500 tracking-[0.25em] uppercase">Организация жизни</p>
       </div>
 
       {/* Dots */}

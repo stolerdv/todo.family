@@ -567,7 +567,7 @@ export default function AppPage() {
       <div className="pt-safe md:pt-0" />
       <div className="px-4 py-4 border-b border-gray-800/80">
         <div className="flex items-center justify-between mb-0.5">
-          <span className="font-bold text-sm tracking-wide">Todo Family</span>
+          <span className="font-bold text-sm tracking-wide">Напоминания</span>
           <button onClick={logout} className="text-gray-600 hover:text-gray-400 text-xs transition px-1 py-0.5 rounded">Выйти</button>
         </div>
         {username && <p className="text-xs text-indigo-400/70">@{username}</p>}
