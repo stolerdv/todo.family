@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
-import type { Account, DepositRate, Txn, TxnType, FinanceSettings, Category, Budget } from '@/lib/finance'
+import { useState, useEffect, useMemo, useCallback, type CSSProperties } from 'react'
+import type { Account, DepositRate, Txn, TxnType, FinanceSettings, Category, Budget, Space } from '@/lib/finance'
 import { Dates } from '@/lib/trackerStats'
 import {
   accountValue, depositValue, effectiveRate, formatMoney, combinedTotal, currenciesInUse,
@@ -21,9 +21,12 @@ function parseMoney(s: string): number {
 }
 
 type View = { name: 'list' | 'detail'; id?: string }
-type Modal = null | 'account' | 'op' | 'menu' | 'rates' | 'cats' | 'budgets'
+type Modal = null | 'account' | 'op' | 'menu' | 'rates' | 'cats' | 'budgets' | 'space'
 
 export default function FinancePage() {
+  const [spaces, setSpaces] = useState<Space[]>([])
+  const [spaceId, setSpaceId] = useState<string | null>(null)
+  const [myId, setMyId] = useState<string | null>(null)
   const [accounts, setAccounts] = useState<Account[]>([])
   const [txns, setTxns] = useState<Txn[]>([])
   const [settings, setSettings] = useState<FinanceSettings>({ baseCurrency: '', rates: {} })
@@ -37,22 +40,42 @@ export default function FinancePage() {
 
   const today = useMemo(() => Dates.todayKey(), [])
 
+  const loadData = useCallback(async (sid: string) => {
+    const qs = `?spaceId=${sid}`
+    const [a, t, s, c, b] = await Promise.all([
+      fetch(`/api/finance/accounts${qs}`).then(r => r.json()),
+      fetch(`/api/finance/txns${qs}`).then(r => r.json()),
+      fetch(`/api/finance/settings${qs}`).then(r => r.json()),
+      fetch(`/api/finance/categories${qs}`).then(r => r.json()),
+      fetch(`/api/finance/budgets${qs}`).then(r => r.json()),
+    ])
+    setAccounts(Array.isArray(a) ? a : [])
+    setTxns(Array.isArray(t) ? t : [])
+    setSettings(s && typeof s === 'object' ? s : { baseCurrency: '', rates: {} })
+    setCategories(Array.isArray(c) ? c : [])
+    setBudgets(Array.isArray(b) ? b : [])
+  }, [])
+
   useEffect(() => {
-    Promise.all([
-      fetch('/api/finance/accounts').then(r => r.json()),
-      fetch('/api/finance/txns').then(r => r.json()),
-      fetch('/api/finance/settings').then(r => r.json()),
-      fetch('/api/finance/categories').then(r => r.json()),
-      fetch('/api/finance/budgets').then(r => r.json()),
-    ]).then(([a, t, s, c, b]) => {
-      setAccounts(Array.isArray(a) ? a : [])
-      setTxns(Array.isArray(t) ? t : [])
-      setSettings(s && typeof s === 'object' ? s : { baseCurrency: '', rates: {} })
-      setCategories(Array.isArray(c) ? c : [])
-      setBudgets(Array.isArray(b) ? b : [])
+    fetch('/api/me').then(r => r.json()).then(me => setMyId(me?.userId ?? null)).catch(() => {})
+    fetch('/api/finance/spaces').then(r => r.json()).then(async (sp) => {
+      const list: Space[] = Array.isArray(sp) ? sp : []
+      setSpaces(list)
+      const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('fin_space') : null
+      const sid = list.find(s => s.id === saved)?.id ?? list[0]?.id ?? null
+      setSpaceId(sid)
+      if (sid) await loadData(sid)
       setLoading(false)
     }).catch(() => setLoading(false))
-  }, [])
+  }, [loadData])
+
+  const switchSpace = useCallback(async (sid: string) => {
+    if (sid === spaceId) return
+    localStorage.setItem('fin_space', sid)
+    setSpaceId(sid); setView({ name: 'list' }); setLoading(true)
+    await loadData(sid)
+    setLoading(false)
+  }, [spaceId, loadData])
 
   const showToast = useCallback((m: string) => { setToast(m); setTimeout(() => setToast(null), 2000) }, [])
   const active = useMemo(() => accounts.filter(a => !a.archived), [accounts])
@@ -67,6 +90,64 @@ export default function FinancePage() {
     return { emoji: b.emoji, label: b.label }
   }, [categories])
 
+  // ── кабинеты ──────────────────────────────────────────────────────────────
+  const refreshSpaces = useCallback(async (): Promise<Space[]> => {
+    const sp = await fetch('/api/finance/spaces').then(r => r.json()).catch(() => [])
+    const list: Space[] = Array.isArray(sp) ? sp : []
+    setSpaces(list)
+    return list
+  }, [])
+
+  // переключиться на кабинет sid (или первый доступный) и перезагрузить данные
+  const jumpToSpace = useCallback(async (preferred?: string) => {
+    const list = await refreshSpaces()
+    const sid = list.find(s => s.id === preferred)?.id ?? list[0]?.id ?? null
+    setSpaceId(sid); setView({ name: 'list' })
+    if (sid) {
+      localStorage.setItem('fin_space', sid)
+      setLoading(true); await loadData(sid); setLoading(false)
+    }
+  }, [refreshSpaces, loadData])
+
+  const createSpace = useCallback(async (name: string, emoji: string) => {
+    const res = await fetch('/api/finance/spaces', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, emoji }) })
+    if (!res.ok) { showToast('Не удалось'); return }
+    const { id } = await res.json()
+    await jumpToSpace(id)
+    showToast('Кабинет создан 🎉')
+  }, [jumpToSpace, showToast])
+
+  const renameSpace = useCallback(async (id: string, name: string) => {
+    setSpaces(prev => prev.map(s => s.id === id ? { ...s, name } : s))
+    await fetch(`/api/finance/spaces/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })
+    showToast('Сохранено')
+  }, [showToast])
+
+  const joinSpace = useCallback(async (code: string) => {
+    const res = await fetch('/api/finance/spaces/join', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) })
+    if (!res.ok) { showToast(res.status === 404 ? 'Код не найден' : 'Не удалось'); return }
+    const { id, name } = await res.json()
+    await jumpToSpace(id)
+    setModal(null)
+    showToast(`Ты в кабинете «${name}» 🎉`)
+  }, [jumpToSpace, showToast])
+
+  const leaveSpace = useCallback(async (id: string) => {
+    if (!confirm('Выйти из кабинета? Данные останутся у остальных участников.')) return
+    await fetch(`/api/finance/spaces/${id}/leave`, { method: 'POST' })
+    setModal(null)
+    await jumpToSpace()
+    showToast('Ты вышел из кабинета')
+  }, [jumpToSpace, showToast])
+
+  const deleteSpace = useCallback(async (id: string) => {
+    if (!confirm('Удалить кабинет НАВСЕГДА вместе со всеми счетами и операциями?')) return
+    await fetch(`/api/finance/spaces/${id}`, { method: 'DELETE' })
+    setModal(null)
+    await jumpToSpace()
+    showToast('Кабинет удалён')
+  }, [jumpToSpace, showToast])
+
   // ── счета ─────────────────────────────────────────────────────────────────
   const saveAccount = useCallback(async (data: any, editing: Account | null, initialRate: { fromDate: string; rate: number } | null) => {
     if (editing) {
@@ -74,7 +155,7 @@ export default function FinancePage() {
       await fetch(`/api/finance/accounts/${editing.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
       showToast('Сохранено')
     } else {
-      const res = await fetch('/api/finance/accounts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+      const res = await fetch('/api/finance/accounts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...data, spaceId }) })
       const created: Account = await res.json()
       created.rates = created.rates || []
       if (initialRate && created.id) {
@@ -85,13 +166,33 @@ export default function FinancePage() {
       showToast('Счёт добавлен 💰')
     }
     setModal(null); setEditingAcc(null)
-  }, [showToast])
+  }, [showToast, spaceId])
 
   const setBalance = useCallback(async (acc: Account, balance: number) => {
     patchAccount(acc.id, { balance })
     await fetch(`/api/finance/accounts/${acc.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ balance }) })
     showToast('Баланс обновлён')
   }, [showToast])
+
+  // пополнение депозита своими деньгами: тело += сумма
+  const topUpDeposit = useCallback(async (acc: Account, amount: number) => {
+    const principal = Math.round((acc.principal + amount) * 100) / 100
+    patchAccount(acc.id, { principal })
+    await fetch(`/api/finance/accounts/${acc.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ principal }) })
+    showToast('Депозит пополнен 💰')
+  }, [showToast])
+
+  // начислить проценты за месяц одним кликом: тело += тело × ставка/12.
+  // startDate сбрасываем на сегодня, чтобы «набежавшая» оценка не задваивала уже начисленное.
+  const accrueInterest = useCallback(async (acc: Account) => {
+    const rate = depositValue(acc, today).currentRate
+    if (rate == null || acc.principal <= 0) return
+    const interest = Math.round((acc.principal * rate / 1200) * 100) / 100
+    const principal = Math.round((acc.principal + interest) * 100) / 100
+    patchAccount(acc.id, { principal, startDate: today })
+    await fetch(`/api/finance/accounts/${acc.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ principal, startDate: today }) })
+    showToast(`+${formatMoney(interest, acc.currency)} процентов 📈`)
+  }, [today, showToast])
 
   const addRate = useCallback(async (acc: Account, fromDate: string, rate: number) => {
     const res = await fetch('/api/finance/rates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accountId: acc.id, fromDate, rate }) })
@@ -148,16 +249,16 @@ export default function FinancePage() {
   // ── настройки ───────────────────────────────────────────────────────────────
   const saveSettings = useCallback(async (baseCurrency: string, rates: Record<string, number>) => {
     setSettings({ baseCurrency, rates })
-    await fetch('/api/finance/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ baseCurrency, rates }) })
+    await fetch('/api/finance/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spaceId, baseCurrency, rates }) })
     setModal(null); showToast('Курсы сохранены')
-  }, [])
+  }, [spaceId, showToast])
 
   const addCategory = useCallback(async (kind: 'expense' | 'income', name: string, emoji: string) => {
-    const res = await fetch('/api/finance/categories', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, name, emoji }) })
+    const res = await fetch('/api/finance/categories', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spaceId, kind, name, emoji }) })
     if (!res.ok) return
     const created = await res.json()
     setCategories(prev => [...prev, created])
-  }, [])
+  }, [spaceId])
 
   const deleteCategory = useCallback(async (id: string) => {
     setCategories(prev => prev.filter(c => c.id !== id))
@@ -181,6 +282,9 @@ export default function FinancePage() {
       {loading ? <div className="tk-spin" /> : (
         <main className="tk-view">
           {view.name === 'list' && (
+            <SpaceBar spaces={spaces} spaceId={spaceId} onSwitch={switchSpace} onManage={() => setModal('space')} />
+          )}
+          {view.name === 'list' && (
             <ListView
               active={active} txns={txns} settings={settings} categories={categories} budgets={budgets} accounts={accounts}
               today={today} catInfo={catInfo}
@@ -197,6 +301,7 @@ export default function FinancePage() {
               onBack={() => setView({ name: 'list' })}
               onEdit={openAccountSheet} onArchive={archiveAccount} onSetBalance={setBalance}
               onAddRate={addRate} onDeleteRate={deleteRate} onDeleteOp={deleteOp}
+              onTopUp={topUpDeposit} onAccrue={accrueInterest}
             />
           )}
         </main>
@@ -208,7 +313,14 @@ export default function FinancePage() {
 
       {modal === 'account' && <AccountSheet editing={editingAcc} today={today} onClose={() => { setModal(null); setEditingAcc(null) }} onSave={saveAccount} onDelete={deleteAccount} />}
       {modal === 'op' && <OperationSheet accounts={spendable} categories={categories} onClose={() => setModal(null)} onSave={addOp} onTransfer={addTransfer} onAddAccount={() => openAccountSheet(null)} />}
-      {modal === 'menu' && <SettingsMenu onClose={() => setModal(null)} onRates={() => setModal('rates')} onCats={() => setModal('cats')} onBudgets={() => setModal('budgets')} />}
+      {modal === 'menu' && <SettingsMenu onClose={() => setModal(null)} onRates={() => setModal('rates')} onCats={() => setModal('cats')} onBudgets={() => setModal('budgets')} onSpaces={() => setModal('space')} />}
+      {modal === 'space' && (
+        <SpaceSheet
+          spaces={spaces} spaceId={spaceId} myId={myId}
+          onClose={() => setModal(null)} onSwitch={id => { setModal(null); switchSpace(id) }}
+          onCreate={createSpace} onRename={renameSpace} onJoin={joinSpace} onLeave={leaveSpace} onDelete={deleteSpace}
+        />
+      )}
       {modal === 'rates' && <RatesSheet settings={settings} onClose={() => setModal('menu')} onSave={saveSettings} />}
       {modal === 'cats' && <CategoriesSheet categories={categories} onClose={() => setModal('menu')} onAdd={addCategory} onDelete={deleteCategory} />}
       {modal === 'budgets' && <BudgetsSheet categories={categories} budgets={budgets} txns={txns} accounts={accounts} settings={settings} today={today} onClose={() => setModal('menu')} onSet={setBudget} />}
@@ -365,21 +477,25 @@ function OpRow({ t, info, fromName, toName, currency, onDelete }: { t: Txn; info
 }
 
 // ── Детали счёта ──────────────────────────────────────────────────────────────
-function DetailView({ acc, txns, today, catInfo, accountName, onBack, onEdit, onArchive, onSetBalance, onAddRate, onDeleteRate, onDeleteOp }: {
+function DetailView({ acc, txns, today, catInfo, accountName, onBack, onEdit, onArchive, onSetBalance, onAddRate, onDeleteRate, onDeleteOp, onTopUp, onAccrue }: {
   acc: Account; txns: Txn[]; today: string; catInfo: (k: string) => { emoji: string; label: string }; accountName: (id: string) => string
   onBack: () => void; onEdit: (a: Account) => void; onArchive: (a: Account) => void; onSetBalance: (a: Account, b: number) => void
   onAddRate: (a: Account, fromDate: string, rate: number) => void; onDeleteRate: (a: Account, rateId: string) => void; onDeleteOp: (t: Txn) => void
+  onTopUp: (a: Account, amount: number) => void; onAccrue: (a: Account) => void
 }) {
   const isDeposit = acc.type === 'deposit'
   const dep = isDeposit ? depositValue(acc, today) : null
   const val = accountValue(acc, today)
   const [editingBalance, setEditingBalance] = useState(false)
   const [balanceStr, setBalanceStr] = useState(String(acc.balance))
+  const [topUpOpen, setTopUpOpen] = useState(false)
+  const [topUpStr, setTopUpStr] = useState('')
   const [newRate, setNewRate] = useState('')
   const [newRateDate, setNewRateDate] = useState(today)
   const sortedRates = [...acc.rates].sort((a, b) => a.fromDate < b.fromDate ? -1 : 1)
   const currentRateId = (() => { let id: string | null = null; for (const r of sortedRates) if (r.fromDate <= today) id = r.id; return id })()
   const effNow = dep?.currentRate != null ? effectiveRate(dep.currentRate, acc.capitalization) : null
+  const monthInterest = dep?.currentRate != null && acc.principal > 0 ? Math.round((acc.principal * dep.currentRate / 1200) * 100) / 100 : 0
 
   return (
     <>
@@ -407,11 +523,26 @@ function DetailView({ acc, txns, today, catInfo, accountName, onBack, onEdit, on
         <>
           <div className="tk-block">
             <div className="fin-kv"><span className="k">Тело депозита</span><span className="v">{formatMoney(acc.principal, acc.currency)}</span></div>
-            <div className="fin-kv"><span className="k">Дата открытия</span><span className="v">{acc.startDate ? Dates.human(acc.startDate) : '—'}</span></div>
+            <div className="fin-kv"><span className="k">Проценты идут с</span><span className="v">{acc.startDate ? Dates.human(acc.startDate) : '—'}</span></div>
             <div className="fin-kv"><span className="k">Ставка сейчас</span><span className="v" style={{ color: 'var(--tk-good)' }}>{dep?.currentRate != null ? dep.currentRate + '%' : '—'}</span></div>
             <div className="fin-kv"><span className="k">Капитализация</span><span className="v">{acc.capitalization === 'monthly' ? 'ежемесячная' : 'нет'}</span></div>
             {effNow != null && acc.capitalization === 'monthly' && <div className="fin-kv"><span className="k">Эффективно годовых</span><span className="v" style={{ color: 'var(--tk-good)' }}>≈ {effNow.toFixed(1)}%</span></div>}
-            <div className="fin-kv"><span className="k">Начислено</span><span className="v" style={{ color: 'var(--tk-good)' }}>+{formatMoney(dep?.interest ?? 0, acc.currency)}</span></div>
+            <div className="fin-kv"><span className="k">Набежало (оценка)</span><span className="v" style={{ color: 'var(--tk-good)' }}>+{formatMoney(dep?.interest ?? 0, acc.currency)}</span></div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 14 }}>
+              {topUpOpen ? (
+                <div className="fin-add-rate">
+                  <input className="tk-input" inputMode="decimal" autoFocus placeholder={`Сумма, ${acc.currency}`} value={topUpStr} onChange={e => setTopUpStr(e.target.value)} />
+                  <button className="tk-btn-primary" style={{ width: 'auto', padding: '0 18px' }} onClick={() => { const v = parseMoney(topUpStr); if (v > 0) { onTopUp(acc, v); setTopUpStr(''); setTopUpOpen(false) } }}>ОК</button>
+                </div>
+              ) : (
+                <button className="tk-btn-ghost" onClick={() => setTopUpOpen(true)}>➕ Пополнить депозит</button>
+              )}
+              {monthInterest > 0 && (
+                <button className="tk-btn-ghost" onClick={() => onAccrue(acc)}>📈 Начислить % за месяц (+{formatMoney(monthInterest, acc.currency)})</button>
+              )}
+            </div>
+            {monthInterest > 0 && <p className="tk-hint" style={{ marginTop: 8 }}>Проценты за месяц = тело × ставка ÷ 12. После начисления «набежало» считается заново с сегодняшнего дня.</p>}
           </div>
           <div className="tk-block">
             <h3>Ставки по датам</h3>
@@ -560,7 +691,7 @@ function OperationSheet({ accounts, categories, onClose, onSave, onTransfer, onA
 }
 
 // ── Меню настроек ────────────────────────────────────────────────────────────────
-function SettingsMenu({ onClose, onRates, onCats, onBudgets }: { onClose: () => void; onRates: () => void; onCats: () => void; onBudgets: () => void }) {
+function SettingsMenu({ onClose, onRates, onCats, onBudgets, onSpaces }: { onClose: () => void; onRates: () => void; onCats: () => void; onBudgets: () => void; onSpaces: () => void }) {
   return (
     <div className="tk-sheet">
       <div className="tk-sheet-backdrop" onClick={onClose} />
@@ -568,9 +699,125 @@ function SettingsMenu({ onClose, onRates, onCats, onBudgets }: { onClose: () => 
         <div className="tk-sheet-grab" />
         <h2>Настройки</h2>
         <div className="tk-sheet-actions">
+          <button className="tk-btn-ghost" onClick={onSpaces}>👥 Кабинеты и доступ</button>
           <button className="tk-btn-ghost" onClick={onRates}>💱 Курсы валют</button>
           <button className="tk-btn-ghost" onClick={onCats}>🏷 Категории</button>
           <button className="tk-btn-ghost" onClick={onBudgets}>🎯 Бюджеты на месяц</button>
+          <button className="tk-btn-ghost" onClick={onClose}>Закрыть</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Кабинеты: панель переключения ────────────────────────────────────────────────
+function SpaceBar({ spaces, spaceId, onSwitch, onManage }: {
+  spaces: Space[]; spaceId: string | null; onSwitch: (id: string) => void; onManage: () => void
+}) {
+  if (!spaces.length) return null
+  const chip = (active: boolean): CSSProperties => ({
+    display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap', cursor: 'pointer', flex: '0 0 auto',
+    padding: '8px 14px', borderRadius: 999, fontSize: 13.5, fontWeight: 700,
+    background: active ? 'var(--tk-accent)' : 'var(--tk-card)',
+    color: active ? '#fff' : 'var(--tk-muted)',
+    border: `1px solid ${active ? 'var(--tk-accent)' : 'var(--tk-line)'}`,
+  })
+  return (
+    <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 12, WebkitOverflowScrolling: 'touch' }}>
+      {spaces.map(s => (
+        <button key={s.id} style={chip(s.id === spaceId)} onClick={() => onSwitch(s.id)}>
+          <span>{s.emoji}</span>{s.name}{s.members.length > 1 && <span style={{ opacity: .7, fontWeight: 600 }}>· {s.members.length}</span>}
+        </button>
+      ))}
+      <button style={chip(false)} onClick={onManage} aria-label="Кабинеты и доступ">👥 ⋯</button>
+    </div>
+  )
+}
+
+// ── Кабинеты: управление и доступ ────────────────────────────────────────────────
+const SPACE_EMOJIS = ['👤', '👨‍👩‍👧', '💼', '🏢', '💰', '✈️', '🏠', '🎯']
+
+function SpaceSheet({ spaces, spaceId, myId, onClose, onSwitch, onCreate, onRename, onJoin, onLeave, onDelete }: {
+  spaces: Space[]; spaceId: string | null; myId: string | null
+  onClose: () => void; onSwitch: (id: string) => void
+  onCreate: (name: string, emoji: string) => void; onRename: (id: string, name: string) => void
+  onJoin: (code: string) => void; onLeave: (id: string) => void; onDelete: (id: string) => void
+}) {
+  const cur = spaces.find(s => s.id === spaceId) ?? null
+  const isOwner = !!(cur && myId && cur.ownerId === myId)
+  const [name, setName] = useState(cur?.name ?? '')
+  const [code, setCode] = useState('')
+  const [newName, setNewName] = useState('')
+  const [newEmoji, setNewEmoji] = useState('💼')
+  const [copied, setCopied] = useState(false)
+
+  const copyCode = () => {
+    if (!cur) return
+    navigator.clipboard?.writeText(cur.shareCode).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) })
+  }
+
+  return (
+    <div className="tk-sheet">
+      <div className="tk-sheet-backdrop" onClick={onClose} />
+      <div className="tk-sheet-card">
+        <div className="tk-sheet-grab" />
+        <h2>Кабинеты</h2>
+        <p className="tk-hint">Отдельные пространства финансов: личный, семейный бюджет, бизнес. У каждого — свои счета, операции, категории и курсы. Кабинет можно вести вдвоём: поделись кодом доступа.</p>
+
+        <div className="tk-block" style={{ padding: '6px 16px' }}>
+          {spaces.map(s => (
+            <div key={s.id} className="fin-kv" style={{ gap: 10, cursor: 'pointer' }} onClick={() => onSwitch(s.id)}>
+              <span style={{ flex: 1, fontSize: 15, fontWeight: s.id === spaceId ? 800 : 500 }}>
+                {s.emoji} {s.name}
+                <span style={{ color: 'var(--tk-muted)', fontSize: 12, marginLeft: 8 }}>{s.members.map(m => '@' + m.username).join(', ')}</span>
+              </span>
+              {s.id === spaceId && <span style={{ color: 'var(--tk-good)', fontWeight: 800 }}>✓</span>}
+            </div>
+          ))}
+        </div>
+
+        {cur && (
+          <>
+            <div className="tk-field">
+              <label>Название кабинета «{cur.emoji} {cur.name}»</label>
+              <div className="fin-add-rate">
+                <input className="tk-input" maxLength={30} value={name} onChange={e => setName(e.target.value)} />
+                <button className="tk-btn-primary" style={{ width: 'auto', padding: '0 16px' }} onClick={() => { if (name.trim() && name.trim() !== cur.name) onRename(cur.id, name.trim()) }}>ОК</button>
+              </div>
+            </div>
+            <div className="tk-field">
+              <label>Доступ для семьи</label>
+              <div className="fin-add-rate">
+                <input className="tk-input" readOnly value={cur.shareCode} style={{ letterSpacing: 3, fontWeight: 800, textAlign: 'center' }} />
+                <button className="tk-btn-primary" style={{ width: 'auto', padding: '0 16px' }} onClick={copyCode}>{copied ? '✓' : 'Копировать'}</button>
+              </div>
+              <p className="tk-hint" style={{ marginTop: 8, marginBottom: 0 }}>Отправь код — на своём телефоне человек вводит его ниже в «Подключиться по коду» и получает полный доступ к этому кабинету.</p>
+            </div>
+          </>
+        )}
+
+        <div className="tk-field">
+          <label>Подключиться по коду</label>
+          <div className="fin-add-rate">
+            <input className="tk-input" placeholder="Код кабинета" value={code} onChange={e => setCode(e.target.value)} style={{ textTransform: 'uppercase' }} />
+            <button className="tk-btn-primary" style={{ width: 'auto', padding: '0 16px' }} onClick={() => { if (code.trim()) onJoin(code) }}>Войти</button>
+          </div>
+        </div>
+
+        <div className="tk-field">
+          <label>Новый кабинет</label>
+          <div className="tk-emoji-picker" style={{ marginBottom: 10 }}>
+            {SPACE_EMOJIS.map(e => <button key={e} type="button" className={`tk-emoji-opt ${e === newEmoji ? 'tk-sel' : ''}`} onClick={() => setNewEmoji(e)}>{e}</button>)}
+          </div>
+          <div className="fin-add-rate">
+            <input className="tk-input" maxLength={30} placeholder="Например: Бизнес" value={newName} onChange={e => setNewName(e.target.value)} />
+            <button className="tk-btn-primary" style={{ width: 'auto', padding: '0 16px' }} onClick={() => { if (newName.trim()) { onCreate(newName.trim(), newEmoji); setNewName('') } }}>Создать</button>
+          </div>
+        </div>
+
+        <div className="tk-sheet-actions">
+          {cur && !isOwner && <button className="tk-btn-ghost" onClick={() => onLeave(cur.id)}>🚪 Выйти из «{cur.name}»</button>}
+          {cur && isOwner && spaces.length > 1 && <button className="tk-btn-ghost tk-btn-danger" onClick={() => onDelete(cur.id)}>🗑 Удалить «{cur.name}» навсегда</button>}
           <button className="tk-btn-ghost" onClick={onClose}>Закрыть</button>
         </div>
       </div>

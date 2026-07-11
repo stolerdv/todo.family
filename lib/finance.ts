@@ -11,6 +11,7 @@ export interface DepositRate {
 export interface Account {
   id: string
   userId: string
+  spaceId: string
   name: string
   type: AccountType
   currency: string
@@ -18,7 +19,7 @@ export interface Account {
   color: string
   balance: number          // для обычных счетов
   principal: number        // тело депозита
-  startDate: string | null // дата открытия депозита
+  startDate: string | null // с какой даты идут проценты депозита
   capitalization: 'monthly' | 'none' // капитализация процентов депозита
   archived: boolean
   sortOrder: number
@@ -32,7 +33,7 @@ function sql() {
 
 function mapAccount(r: any, rates: DepositRate[] = []): Account {
   return {
-    id: r.id, userId: r.user_id, name: r.name, type: r.type as AccountType,
+    id: r.id, userId: r.user_id, spaceId: r.space_id, name: r.name, type: r.type as AccountType,
     currency: r.currency, emoji: r.emoji, color: r.color,
     balance: Number(r.balance), principal: Number(r.principal),
     startDate: r.start_date ?? null,
@@ -42,15 +43,102 @@ function mapAccount(r: any, rates: DepositRate[] = []): Account {
   }
 }
 
+// ── Кабинеты (spaces): общие пространства финансов, доступ по share-коду ────────
+// Паттерн как у todo_section_members: участник кабинета видит и правит всё внутри.
+
+export interface SpaceMember { id: string; username: string }
+export interface Space {
+  id: string
+  name: string
+  emoji: string
+  ownerId: string
+  shareCode: string
+  createdAt: string
+  members: SpaceMember[]
+}
+
+function genCode(): string {
+  return Math.random().toString(36).slice(2, 10).toUpperCase()
+}
+
+export async function isMember(spaceId: string, userId: string): Promise<boolean> {
+  const r = await sql()`SELECT 1 FROM finance_space_members WHERE space_id = ${spaceId} AND user_id = ${userId} LIMIT 1`
+  return !!r[0]
+}
+
+async function spaceRows(userId: string) {
+  return sql()`
+    SELECT s.id, s.name, s.emoji, s.owner_id, s.share_code, s.created_at
+    FROM finance_spaces s
+    JOIN finance_space_members m ON m.space_id = s.id AND m.user_id = ${userId}
+    ORDER BY s.created_at`
+}
+
+// список кабинетов пользователя; если нет ни одного — создаёт «Личный»
+export async function getSpaces(userId: string): Promise<Space[]> {
+  let rows = await spaceRows(userId)
+  if (rows.length === 0) {
+    await createSpace(userId, 'Личный', '👤')
+    rows = await spaceRows(userId)
+  }
+  const ids = (rows as any[]).map(r => r.id)
+  const mem = await sql()`
+    SELECT m.space_id, u.id, u.username
+    FROM finance_space_members m JOIN todo_users u ON u.id = m.user_id
+    WHERE m.space_id = ANY(${ids}) ORDER BY m.joined_at`
+  const byId: Record<string, SpaceMember[]> = {}
+  for (const r of mem as any[]) (byId[r.space_id] ??= []).push({ id: r.id, username: r.username })
+  return (rows as any[]).map(r => ({
+    id: r.id, name: r.name, emoji: r.emoji, ownerId: r.owner_id, shareCode: r.share_code,
+    createdAt: r.created_at, members: byId[r.id] ?? [],
+  }))
+}
+
+export async function createSpace(userId: string, name: string, emoji: string): Promise<{ id: string }> {
+  const id = crypto.randomUUID()
+  const q = sql()
+  await q.transaction([
+    q`INSERT INTO finance_spaces (id, name, emoji, owner_id, share_code) VALUES (${id}, ${name}, ${emoji}, ${userId}, ${genCode()})`,
+    q`INSERT INTO finance_space_members (space_id, user_id) VALUES (${id}, ${userId})`,
+  ])
+  return { id }
+}
+
+export async function updateSpace(id: string, userId: string, f: { name?: string; emoji?: string }): Promise<void> {
+  if (f.name  !== undefined) await sql()`UPDATE finance_spaces s SET name  = ${f.name}  FROM finance_space_members m WHERE s.id = ${id} AND m.space_id = s.id AND m.user_id = ${userId}`
+  if (f.emoji !== undefined) await sql()`UPDATE finance_spaces s SET emoji = ${f.emoji} FROM finance_space_members m WHERE s.id = ${id} AND m.space_id = s.id AND m.user_id = ${userId}`
+}
+
+// удалить может только владелец; каскад снесёт счета, операции, категории, бюджеты, настройки
+export async function deleteSpace(id: string, userId: string): Promise<void> {
+  await sql()`DELETE FROM finance_spaces WHERE id = ${id} AND owner_id = ${userId}`
+}
+
+export async function joinSpaceByCode(code: string, userId: string): Promise<{ id: string; name: string } | null> {
+  const rows = await sql()`SELECT id, name FROM finance_spaces WHERE share_code = ${code.trim().toUpperCase()} LIMIT 1`
+  if (!rows[0]) return null
+  await sql()`INSERT INTO finance_space_members (space_id, user_id) VALUES (${rows[0].id}, ${userId}) ON CONFLICT DO NOTHING`
+  return { id: rows[0].id, name: rows[0].name }
+}
+
+// владелец не выходит из своего кабинета — он его удаляет
+export async function leaveSpace(spaceId: string, userId: string): Promise<void> {
+  await sql()`
+    DELETE FROM finance_space_members WHERE space_id = ${spaceId} AND user_id = ${userId}
+    AND NOT EXISTS (SELECT 1 FROM finance_spaces WHERE id = ${spaceId} AND owner_id = ${userId})`
+}
+
 // ── Чтение ────────────────────────────────────────────────────────────────────
 
-export async function getAccounts(userId: string): Promise<Account[]> {
+export async function getAccounts(spaceId: string, userId: string): Promise<Account[]> {
   const rows = await sql()`
-    SELECT id, user_id, name, type, currency, emoji, color,
-           balance::float8 AS balance, principal::float8 AS principal,
-           to_char(start_date, 'YYYY-MM-DD') AS start_date, capitalization, archived, sort_order, created_at
-    FROM finance_accounts WHERE user_id = ${userId}
-    ORDER BY sort_order, created_at`
+    SELECT a.id, a.user_id, a.space_id, a.name, a.type, a.currency, a.emoji, a.color,
+           a.balance::float8 AS balance, a.principal::float8 AS principal,
+           to_char(a.start_date, 'YYYY-MM-DD') AS start_date, a.capitalization, a.archived, a.sort_order, a.created_at
+    FROM finance_accounts a
+    JOIN finance_space_members m ON m.space_id = a.space_id AND m.user_id = ${userId}
+    WHERE a.space_id = ${spaceId}
+    ORDER BY a.sort_order, a.created_at`
   if (rows.length === 0) return []
   const ids = rows.map((r: any) => r.id)
   const rateRows = await sql()`
@@ -63,10 +151,12 @@ export async function getAccounts(userId: string): Promise<Account[]> {
 
 export async function getAccount(id: string, userId: string): Promise<Account | null> {
   const rows = await sql()`
-    SELECT id, user_id, name, type, currency, emoji, color,
-           balance::float8 AS balance, principal::float8 AS principal,
-           to_char(start_date, 'YYYY-MM-DD') AS start_date, capitalization, archived, sort_order, created_at
-    FROM finance_accounts WHERE id = ${id} AND user_id = ${userId} LIMIT 1`
+    SELECT a.id, a.user_id, a.space_id, a.name, a.type, a.currency, a.emoji, a.color,
+           a.balance::float8 AS balance, a.principal::float8 AS principal,
+           to_char(a.start_date, 'YYYY-MM-DD') AS start_date, a.capitalization, a.archived, a.sort_order, a.created_at
+    FROM finance_accounts a
+    JOIN finance_space_members m ON m.space_id = a.space_id AND m.user_id = ${userId}
+    WHERE a.id = ${id} LIMIT 1`
   if (!rows[0]) return null
   const rateRows = await sql()`
     SELECT id, to_char(from_date, 'YYYY-MM-DD') AS from_date, rate::float8 AS rate
@@ -88,44 +178,49 @@ export interface AccountInput {
   capitalization?: 'monthly' | 'none'
 }
 
-export async function createAccount(userId: string, a: AccountInput): Promise<Account> {
+export async function createAccount(spaceId: string, userId: string, a: AccountInput): Promise<Account> {
+  if (!(await isMember(spaceId, userId))) throw new Error('not found')
   const rows = await sql()`
-    INSERT INTO finance_accounts (user_id, name, type, currency, emoji, color, balance, principal, start_date, capitalization)
-    VALUES (${userId}, ${a.name}, ${a.type ?? 'cash'}, ${a.currency ?? '₸'}, ${a.emoji ?? '💵'},
+    INSERT INTO finance_accounts (user_id, space_id, name, type, currency, emoji, color, balance, principal, start_date, capitalization)
+    VALUES (${userId}, ${spaceId}, ${a.name}, ${a.type ?? 'cash'}, ${a.currency ?? '₸'}, ${a.emoji ?? '💵'},
             ${a.color ?? '#3ddc97'}, ${a.balance ?? 0}, ${a.principal ?? 0}, ${a.startDate ?? null}::date, ${a.capitalization ?? 'monthly'})
-    RETURNING id, user_id, name, type, currency, emoji, color,
+    RETURNING id, user_id, space_id, name, type, currency, emoji, color,
               balance::float8 AS balance, principal::float8 AS principal,
               to_char(start_date, 'YYYY-MM-DD') AS start_date, capitalization, archived, sort_order, created_at`
   return mapAccount(rows[0], [])
 }
 
+// правки скоупятся по членству в кабинете счёта — участники правят общие счета
 export async function updateAccount(id: string, userId: string, f: Partial<AccountInput & { archived: boolean; sortOrder: number }>): Promise<void> {
-  if (f.name       !== undefined) await sql()`UPDATE finance_accounts SET name       = ${f.name}       WHERE id = ${id} AND user_id = ${userId}`
-  if (f.type       !== undefined) await sql()`UPDATE finance_accounts SET type       = ${f.type}       WHERE id = ${id} AND user_id = ${userId}`
-  if (f.currency   !== undefined) await sql()`UPDATE finance_accounts SET currency   = ${f.currency}   WHERE id = ${id} AND user_id = ${userId}`
-  if (f.emoji      !== undefined) await sql()`UPDATE finance_accounts SET emoji      = ${f.emoji}      WHERE id = ${id} AND user_id = ${userId}`
-  if (f.color      !== undefined) await sql()`UPDATE finance_accounts SET color      = ${f.color}      WHERE id = ${id} AND user_id = ${userId}`
-  if (f.balance    !== undefined) await sql()`UPDATE finance_accounts SET balance    = ${f.balance}    WHERE id = ${id} AND user_id = ${userId}`
-  if (f.principal  !== undefined) await sql()`UPDATE finance_accounts SET principal  = ${f.principal}  WHERE id = ${id} AND user_id = ${userId}`
-  if (f.startDate  !== undefined) await sql()`UPDATE finance_accounts SET start_date = ${f.startDate}::date WHERE id = ${id} AND user_id = ${userId}`
-  if (f.capitalization !== undefined) await sql()`UPDATE finance_accounts SET capitalization = ${f.capitalization} WHERE id = ${id} AND user_id = ${userId}`
-  if (f.archived   !== undefined) await sql()`UPDATE finance_accounts SET archived   = ${f.archived}   WHERE id = ${id} AND user_id = ${userId}`
-  if (f.sortOrder  !== undefined) await sql()`UPDATE finance_accounts SET sort_order = ${f.sortOrder}  WHERE id = ${id} AND user_id = ${userId}`
+  if (f.name       !== undefined) await sql()`UPDATE finance_accounts a SET name       = ${f.name}       FROM finance_space_members m WHERE a.id = ${id} AND m.space_id = a.space_id AND m.user_id = ${userId}`
+  if (f.type       !== undefined) await sql()`UPDATE finance_accounts a SET type       = ${f.type}       FROM finance_space_members m WHERE a.id = ${id} AND m.space_id = a.space_id AND m.user_id = ${userId}`
+  if (f.currency   !== undefined) await sql()`UPDATE finance_accounts a SET currency   = ${f.currency}   FROM finance_space_members m WHERE a.id = ${id} AND m.space_id = a.space_id AND m.user_id = ${userId}`
+  if (f.emoji      !== undefined) await sql()`UPDATE finance_accounts a SET emoji      = ${f.emoji}      FROM finance_space_members m WHERE a.id = ${id} AND m.space_id = a.space_id AND m.user_id = ${userId}`
+  if (f.color      !== undefined) await sql()`UPDATE finance_accounts a SET color      = ${f.color}      FROM finance_space_members m WHERE a.id = ${id} AND m.space_id = a.space_id AND m.user_id = ${userId}`
+  if (f.balance    !== undefined) await sql()`UPDATE finance_accounts a SET balance    = ${f.balance}    FROM finance_space_members m WHERE a.id = ${id} AND m.space_id = a.space_id AND m.user_id = ${userId}`
+  if (f.principal  !== undefined) await sql()`UPDATE finance_accounts a SET principal  = ${f.principal}  FROM finance_space_members m WHERE a.id = ${id} AND m.space_id = a.space_id AND m.user_id = ${userId}`
+  if (f.startDate  !== undefined) await sql()`UPDATE finance_accounts a SET start_date = ${f.startDate}::date FROM finance_space_members m WHERE a.id = ${id} AND m.space_id = a.space_id AND m.user_id = ${userId}`
+  if (f.capitalization !== undefined) await sql()`UPDATE finance_accounts a SET capitalization = ${f.capitalization} FROM finance_space_members m WHERE a.id = ${id} AND m.space_id = a.space_id AND m.user_id = ${userId}`
+  if (f.archived   !== undefined) await sql()`UPDATE finance_accounts a SET archived   = ${f.archived}   FROM finance_space_members m WHERE a.id = ${id} AND m.space_id = a.space_id AND m.user_id = ${userId}`
+  if (f.sortOrder  !== undefined) await sql()`UPDATE finance_accounts a SET sort_order = ${f.sortOrder}  FROM finance_space_members m WHERE a.id = ${id} AND m.space_id = a.space_id AND m.user_id = ${userId}`
 }
 
 export async function deleteAccount(id: string, userId: string): Promise<void> {
-  await sql()`DELETE FROM finance_accounts WHERE id = ${id} AND user_id = ${userId}`
+  await sql()`DELETE FROM finance_accounts a USING finance_space_members m WHERE a.id = ${id} AND m.space_id = a.space_id AND m.user_id = ${userId}`
 }
 
 // ── Ставки депозита ─────────────────────────────────────────────────────────────
 
-async function ownsAccount(accountId: string, userId: string): Promise<boolean> {
-  const r = await sql()`SELECT 1 FROM finance_accounts WHERE id = ${accountId} AND user_id = ${userId} LIMIT 1`
-  return !!r[0]
+async function memberOfAccount(accountId: string, userId: string): Promise<{ spaceId: string } | null> {
+  const r = await sql()`
+    SELECT a.space_id FROM finance_accounts a
+    JOIN finance_space_members m ON m.space_id = a.space_id AND m.user_id = ${userId}
+    WHERE a.id = ${accountId} LIMIT 1`
+  return r[0] ? { spaceId: (r[0] as any).space_id } : null
 }
 
 export async function addRate(accountId: string, userId: string, fromDate: string, rate: number): Promise<DepositRate> {
-  if (!(await ownsAccount(accountId, userId))) throw new Error('not found')
+  if (!(await memberOfAccount(accountId, userId))) throw new Error('not found')
   const rows = await sql()`
     INSERT INTO finance_deposit_rates (account_id, from_date, rate)
     VALUES (${accountId}, ${fromDate}::date, ${rate})
@@ -136,29 +231,33 @@ export async function addRate(accountId: string, userId: string, fromDate: strin
 export async function deleteRate(rateId: string, userId: string): Promise<void> {
   await sql()`
     DELETE FROM finance_deposit_rates r
-    USING finance_accounts a
-    WHERE r.id = ${rateId} AND r.account_id = a.id AND a.user_id = ${userId}`
+    USING finance_accounts a, finance_space_members m
+    WHERE r.id = ${rateId} AND r.account_id = a.id AND m.space_id = a.space_id AND m.user_id = ${userId}`
 }
 
-// ── Настройки (базовая валюта + курсы) ──────────────────────────────────────────
+// ── Настройки кабинета (базовая валюта + курсы) ──────────────────────────────────
 
 export interface FinanceSettings {
   baseCurrency: string
   rates: Record<string, number>   // 1 единица валюты = X базовой
 }
 
-export async function getSettings(userId: string): Promise<FinanceSettings> {
-  const rows = await sql()`SELECT base_currency, rates FROM finance_settings WHERE user_id = ${userId} LIMIT 1`
+export async function getSettings(spaceId: string, userId: string): Promise<FinanceSettings> {
+  const rows = await sql()`
+    SELECT s.base_currency, s.rates FROM finance_space_settings s
+    JOIN finance_space_members m ON m.space_id = s.space_id AND m.user_id = ${userId}
+    WHERE s.space_id = ${spaceId} LIMIT 1`
   if (!rows[0]) return { baseCurrency: '', rates: {} }
   const r = rows[0]
   return { baseCurrency: r.base_currency ?? '', rates: (typeof r.rates === 'string' ? JSON.parse(r.rates) : r.rates) ?? {} }
 }
 
-export async function saveSettings(userId: string, baseCurrency: string, rates: Record<string, number>): Promise<void> {
+export async function saveSettings(spaceId: string, userId: string, baseCurrency: string, rates: Record<string, number>): Promise<void> {
+  if (!(await isMember(spaceId, userId))) throw new Error('not found')
   await sql()`
-    INSERT INTO finance_settings (user_id, base_currency, rates)
-    VALUES (${userId}, ${baseCurrency}, ${JSON.stringify(rates)}::jsonb)
-    ON CONFLICT (user_id) DO UPDATE SET base_currency = EXCLUDED.base_currency, rates = EXCLUDED.rates, updated_at = now()`
+    INSERT INTO finance_space_settings (space_id, base_currency, rates)
+    VALUES (${spaceId}, ${baseCurrency}, ${JSON.stringify(rates)}::jsonb)
+    ON CONFLICT (space_id) DO UPDATE SET base_currency = EXCLUDED.base_currency, rates = EXCLUDED.rates, updated_at = now()`
 }
 
 // ── Транзакции ──────────────────────────────────────────────────────────────────
@@ -188,12 +287,14 @@ function mapTxn(r: any): Txn {
   }
 }
 
-export async function getTxns(userId: string, limit = 300): Promise<Txn[]> {
+export async function getTxns(spaceId: string, userId: string, limit = 300): Promise<Txn[]> {
   const rows = await sql()`
-    SELECT id, user_id, account_id, type, amount::float8 AS amount, category, comment,
-           to_char(day, 'YYYY-MM-DD') AS day, to_account_id, to_amount::float8 AS to_amount, created_at
-    FROM finance_txns WHERE user_id = ${userId}
-    ORDER BY day DESC, created_at DESC LIMIT ${limit}`
+    SELECT t.id, t.user_id, t.account_id, t.type, t.amount::float8 AS amount, t.category, t.comment,
+           to_char(t.day, 'YYYY-MM-DD') AS day, t.to_account_id, t.to_amount::float8 AS to_amount, t.created_at
+    FROM finance_txns t
+    JOIN finance_space_members m ON m.space_id = t.space_id AND m.user_id = ${userId}
+    WHERE t.space_id = ${spaceId}
+    ORDER BY t.day DESC, t.created_at DESC LIMIT ${limit}`
   return (rows as any[]).map(mapTxn)
 }
 
@@ -208,17 +309,17 @@ export interface TxnInput {
 
 // создаёт операцию и атомарно меняет баланс счёта. Возвращает {txn, delta}.
 export async function createTxn(userId: string, t: TxnInput): Promise<{ txn: Txn; delta: number }> {
-  const own = await sql()`SELECT 1 FROM finance_accounts WHERE id = ${t.accountId} AND user_id = ${userId} LIMIT 1`
-  if (!own[0]) throw new Error('not found')
+  const acc = await memberOfAccount(t.accountId, userId)
+  if (!acc) throw new Error('not found')
   const amount = Math.abs(Number(t.amount))
   const delta = t.type === 'expense' ? -amount : amount
   const q = sql()
   const res = await q.transaction([
-    q`INSERT INTO finance_txns (user_id, account_id, type, amount, category, comment, day)
-      VALUES (${userId}, ${t.accountId}, ${t.type}, ${amount}, ${t.category ?? ''}, ${t.comment ?? ''}, COALESCE(${t.day ?? null}::date, CURRENT_DATE))
+    q`INSERT INTO finance_txns (user_id, space_id, account_id, type, amount, category, comment, day)
+      VALUES (${userId}, ${acc.spaceId}, ${t.accountId}, ${t.type}, ${amount}, ${t.category ?? ''}, ${t.comment ?? ''}, COALESCE(${t.day ?? null}::date, CURRENT_DATE))
       RETURNING id, user_id, account_id, type, amount::float8 AS amount, category, comment,
                 to_char(day, 'YYYY-MM-DD') AS day, to_account_id, to_amount::float8 AS to_amount, created_at`,
-    q`UPDATE finance_accounts SET balance = balance + ${delta} WHERE id = ${t.accountId} AND user_id = ${userId}`,
+    q`UPDATE finance_accounts SET balance = balance + ${delta} WHERE id = ${t.accountId}`,
   ])
   return { txn: mapTxn((res[0] as any[])[0]), delta }
 }
@@ -234,18 +335,22 @@ export interface TransferInput {
 
 // перевод между счетами: списывает с одного, зачисляет на другой (атомарно)
 export async function createTransfer(userId: string, t: TransferInput): Promise<Txn> {
-  const own = await sql()`SELECT count(*)::int AS n FROM finance_accounts WHERE id IN (${t.fromAccountId}, ${t.toAccountId}) AND user_id = ${userId}`
-  if ((own[0] as any).n < 2) throw new Error('not found')
+  const own = await sql()`
+    SELECT a.id, a.space_id FROM finance_accounts a
+    JOIN finance_space_members m ON m.space_id = a.space_id AND m.user_id = ${userId}
+    WHERE a.id IN (${t.fromAccountId}, ${t.toAccountId})`
+  if (own.length < 2) throw new Error('not found')
+  const spaceId = (own as any[]).find(r => r.id === t.fromAccountId)!.space_id
   const amount = Math.abs(Number(t.amount))
   const toAmount = Math.abs(Number(t.toAmount ?? t.amount))
   const q = sql()
   const res = await q.transaction([
-    q`INSERT INTO finance_txns (user_id, account_id, type, amount, category, comment, day, to_account_id, to_amount)
-      VALUES (${userId}, ${t.fromAccountId}, 'transfer', ${amount}, '', ${t.comment ?? ''}, COALESCE(${t.day ?? null}::date, CURRENT_DATE), ${t.toAccountId}, ${toAmount})
+    q`INSERT INTO finance_txns (user_id, space_id, account_id, type, amount, category, comment, day, to_account_id, to_amount)
+      VALUES (${userId}, ${spaceId}, ${t.fromAccountId}, 'transfer', ${amount}, '', ${t.comment ?? ''}, COALESCE(${t.day ?? null}::date, CURRENT_DATE), ${t.toAccountId}, ${toAmount})
       RETURNING id, user_id, account_id, type, amount::float8 AS amount, category, comment,
                 to_char(day, 'YYYY-MM-DD') AS day, to_account_id, to_amount::float8 AS to_amount, created_at`,
-    q`UPDATE finance_accounts SET balance = balance - ${amount} WHERE id = ${t.fromAccountId} AND user_id = ${userId}`,
-    q`UPDATE finance_accounts SET balance = balance + ${toAmount} WHERE id = ${t.toAccountId} AND user_id = ${userId}`,
+    q`UPDATE finance_accounts SET balance = balance - ${amount} WHERE id = ${t.fromAccountId}`,
+    q`UPDATE finance_accounts SET balance = balance + ${toAmount} WHERE id = ${t.toAccountId}`,
   ])
   return mapTxn((res[0] as any[])[0])
 }
@@ -253,8 +358,10 @@ export async function createTransfer(userId: string, t: TransferInput): Promise<
 // удаляет операцию и возвращает баланс назад.
 export async function deleteTxn(id: string, userId: string): Promise<{ reverts: { accountId: string; delta: number }[] } | null> {
   const rows = await sql()`
-    SELECT account_id, type, amount::float8 AS amount, to_account_id, to_amount::float8 AS to_amount
-    FROM finance_txns WHERE id = ${id} AND user_id = ${userId} LIMIT 1`
+    SELECT t.account_id, t.type, t.amount::float8 AS amount, t.to_account_id, t.to_amount::float8 AS to_amount
+    FROM finance_txns t
+    JOIN finance_space_members m ON m.space_id = t.space_id AND m.user_id = ${userId}
+    WHERE t.id = ${id} LIMIT 1`
   if (!rows[0]) return null
   const r = rows[0] as any
   const amount = Math.abs(Number(r.amount))
@@ -262,21 +369,21 @@ export async function deleteTxn(id: string, userId: string): Promise<{ reverts: 
   if (r.type === 'transfer') {
     const toAmount = Math.abs(Number(r.to_amount ?? r.amount))
     await q.transaction([
-      q`DELETE FROM finance_txns WHERE id = ${id} AND user_id = ${userId}`,
-      q`UPDATE finance_accounts SET balance = balance + ${amount} WHERE id = ${r.account_id} AND user_id = ${userId}`,
-      q`UPDATE finance_accounts SET balance = balance - ${toAmount} WHERE id = ${r.to_account_id} AND user_id = ${userId}`,
+      q`DELETE FROM finance_txns WHERE id = ${id}`,
+      q`UPDATE finance_accounts SET balance = balance + ${amount} WHERE id = ${r.account_id}`,
+      q`UPDATE finance_accounts SET balance = balance - ${toAmount} WHERE id = ${r.to_account_id}`,
     ])
     return { reverts: [{ accountId: r.account_id, delta: amount }, { accountId: r.to_account_id, delta: -toAmount }] }
   }
   const reverse = r.type === 'expense' ? amount : -amount
   await q.transaction([
-    q`DELETE FROM finance_txns WHERE id = ${id} AND user_id = ${userId}`,
-    q`UPDATE finance_accounts SET balance = balance + ${reverse} WHERE id = ${r.account_id} AND user_id = ${userId}`,
+    q`DELETE FROM finance_txns WHERE id = ${id}`,
+    q`UPDATE finance_accounts SET balance = balance + ${reverse} WHERE id = ${r.account_id}`,
   ])
   return { reverts: [{ accountId: r.account_id, delta: reverse }] }
 }
 
-// ── Категории (пользовательские) ────────────────────────────────────────────────
+// ── Категории (свои у каждого кабинета) ─────────────────────────────────────────
 
 export interface Category { id: string; kind: 'expense' | 'income'; name: string; emoji: string; sortOrder: number }
 
@@ -296,45 +403,56 @@ function mapCat(r: any): Category {
   return { id: r.id, kind: r.kind, name: r.name, emoji: r.emoji ?? '•', sortOrder: r.sort_order ?? 0 }
 }
 
-export async function getCategories(userId: string): Promise<Category[]> {
-  let rows = await sql()`SELECT id, kind, name, emoji, sort_order FROM finance_categories WHERE user_id = ${userId} ORDER BY kind, sort_order, created_at`
+export async function getCategories(spaceId: string, userId: string): Promise<Category[]> {
+  if (!(await isMember(spaceId, userId))) return []
+  let rows = await sql()`SELECT id, kind, name, emoji, sort_order FROM finance_categories WHERE space_id = ${spaceId} ORDER BY kind, sort_order, created_at`
   if (rows.length === 0) {
-    // засеваем стандартный набор при первом обращении
+    // засеваем стандартный набор при первом обращении к кабинету
     const q = sql()
     await q.transaction(DEFAULT_CATEGORIES.map((c, i) =>
-      q`INSERT INTO finance_categories (user_id, kind, name, emoji, sort_order) VALUES (${userId}, ${c.kind}, ${c.name}, ${c.emoji}, ${i})`))
-    rows = await sql()`SELECT id, kind, name, emoji, sort_order FROM finance_categories WHERE user_id = ${userId} ORDER BY kind, sort_order, created_at`
+      q`INSERT INTO finance_categories (user_id, space_id, kind, name, emoji, sort_order) VALUES (${userId}, ${spaceId}, ${c.kind}, ${c.name}, ${c.emoji}, ${i})`))
+    rows = await sql()`SELECT id, kind, name, emoji, sort_order FROM finance_categories WHERE space_id = ${spaceId} ORDER BY kind, sort_order, created_at`
   }
   return (rows as any[]).map(mapCat)
 }
 
-export async function createCategory(userId: string, kind: 'expense' | 'income', name: string, emoji: string): Promise<Category> {
+export async function createCategory(spaceId: string, userId: string, kind: 'expense' | 'income', name: string, emoji: string): Promise<Category> {
+  if (!(await isMember(spaceId, userId))) throw new Error('not found')
   const rows = await sql()`
-    INSERT INTO finance_categories (user_id, kind, name, emoji, sort_order)
-    VALUES (${userId}, ${kind}, ${name}, ${emoji || '•'}, 100)
+    INSERT INTO finance_categories (user_id, space_id, kind, name, emoji, sort_order)
+    VALUES (${userId}, ${spaceId}, ${kind}, ${name}, ${emoji || '•'}, 100)
     RETURNING id, kind, name, emoji, sort_order`
   return mapCat(rows[0])
 }
 
 export async function deleteCategory(id: string, userId: string): Promise<void> {
-  await sql()`DELETE FROM finance_categories WHERE id = ${id} AND user_id = ${userId}`
+  await sql()`DELETE FROM finance_categories c USING finance_space_members m WHERE c.id = ${id} AND m.space_id = c.space_id AND m.user_id = ${userId}`
 }
 
 // ── Бюджеты ──────────────────────────────────────────────────────────────────
 
 export interface Budget { id: string; categoryId: string; amount: number }
 
-export async function getBudgets(userId: string): Promise<Budget[]> {
-  const rows = await sql()`SELECT id, category_id, amount::float8 AS amount FROM finance_budgets WHERE user_id = ${userId}`
+export async function getBudgets(spaceId: string, userId: string): Promise<Budget[]> {
+  const rows = await sql()`
+    SELECT b.id, b.category_id, b.amount::float8 AS amount
+    FROM finance_budgets b
+    JOIN finance_space_members m ON m.space_id = b.space_id AND m.user_id = ${userId}
+    WHERE b.space_id = ${spaceId}`
   return (rows as any[]).map(r => ({ id: r.id, categoryId: r.category_id, amount: Number(r.amount) }))
 }
 
 export async function setBudget(userId: string, categoryId: string, amount: number): Promise<void> {
+  const c = await sql()`
+    SELECT c.space_id FROM finance_categories c
+    JOIN finance_space_members m ON m.space_id = c.space_id AND m.user_id = ${userId}
+    WHERE c.id = ${categoryId} LIMIT 1`
+  if (!c[0]) throw new Error('not found')
   if (amount <= 0) {
-    await sql()`DELETE FROM finance_budgets b USING finance_categories c WHERE b.category_id = ${categoryId} AND b.category_id = c.id AND c.user_id = ${userId}`
+    await sql()`DELETE FROM finance_budgets WHERE category_id = ${categoryId}`
     return
   }
   await sql()`
-    INSERT INTO finance_budgets (user_id, category_id, amount) VALUES (${userId}, ${categoryId}, ${amount})
+    INSERT INTO finance_budgets (user_id, space_id, category_id, amount) VALUES (${userId}, ${(c[0] as any).space_id}, ${categoryId}, ${amount})
     ON CONFLICT (category_id) DO UPDATE SET amount = EXCLUDED.amount`
 }

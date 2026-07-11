@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getTxns, createTxn } from '@/lib/finance'
 import { getUserFromRequest } from '@/lib/getUser'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     const user = await getUserFromRequest()
-    if (!user) return NextResponse.json([])
-    return NextResponse.json(await getTxns(user.userId))
+    const spaceId = req.nextUrl.searchParams.get('spaceId')
+    if (!user || !spaceId) return NextResponse.json([])
+    return NextResponse.json(await getTxns(spaceId, user.userId))
   } catch (e) {
     console.error('GET /api/finance/txns error:', e)
     return NextResponse.json([], { status: 200 })
