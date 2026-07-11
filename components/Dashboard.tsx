@@ -7,14 +7,14 @@ const PRIORITY_COLOR: Record<string, string> = {
   Critical: 'bg-red-400',
   High:     'bg-orange-400',
   Medium:   'bg-yellow-400',
-  Low:      'bg-blue-400',
+  Low:      'bg-gray-400',
   None:     'bg-gray-600',
 }
 const PRIORITY_RING: Record<string, string> = {
   Critical: 'border-red-500/40 bg-red-500/10',
   High:     'border-orange-500/40 bg-orange-500/10',
   Medium:   'border-yellow-500/40 bg-yellow-500/10',
-  Low:      'border-blue-500/40 bg-blue-500/10',
+  Low:      'border-gray-500/40 bg-gray-500/10',
   None:     'border-gray-700 bg-gray-800/40',
 }
 const DONE_STATES = ['Done', 'Cancelled']
@@ -25,11 +25,13 @@ interface Props {
   sections: Section[]
   subtasks: Subtask[]
   onTaskClick: (taskId: string, sectionId: string) => void
+  onAddEvent?: (day: string, title: string) => void
 }
 
-export default function Dashboard({ tasks, sections, subtasks, onTaskClick }: Props) {
+export default function Dashboard({ tasks, sections, subtasks, onTaskClick, onAddEvent }: Props) {
   const [currentDate, setCurrentDate] = useState(new Date())
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
+  const [eventTitle, setEventTitle] = useState('')
 
   const today = new Date(); today.setHours(0,0,0,0)
   const todayStr = today.toISOString().slice(0, 10)
@@ -186,16 +188,26 @@ export default function Dashboard({ tasks, sections, subtasks, onTaskClick }: Pr
             })}
           </div>
 
-          {/* Selected day tasks */}
+          {/* Selected day: tasks + add event */}
           {selectedDay && (
             <div className="mt-4 border-t border-gray-800/80 pt-3">
-              <p className="text-xs text-gray-600 mb-2">
-                {new Date(selectedDay + 'T12:00').toLocaleDateString('ru', { day: 'numeric', month: 'long' })}
-                {selectedDayTasks.length === 0 ? ' — нет задач' : ''}
+              <p className="text-xs text-gray-500 mb-2 capitalize">
+                {new Date(selectedDay + 'T12:00').toLocaleDateString('ru', { weekday: 'long', day: 'numeric', month: 'long' })}
               </p>
               <div className="space-y-1.5 max-h-48 overflow-y-auto">
                 {selectedDayTasks.map(t => <TaskPill key={t.id} task={t} />)}
               </div>
+              {onAddEvent && (
+                <div className="mt-2 flex items-center gap-2">
+                  <input value={eventTitle} onChange={e => setEventTitle(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' && eventTitle.trim()) { onAddEvent(selectedDay, eventTitle.trim()); setEventTitle('') } }}
+                    placeholder="+ Добавить событие на этот день"
+                    className="flex-1 bg-white/[0.04] border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 outline-none transition focus:border-accent-500 focus:bg-white/[0.06]" />
+                  <button onClick={() => { if (eventTitle.trim()) { onAddEvent(selectedDay, eventTitle.trim()); setEventTitle('') } }}
+                    disabled={!eventTitle.trim()}
+                    className="bg-accent-600 hover:bg-accent-500 text-[#120a00] font-semibold disabled:opacity-40 text-sm px-4 py-2 rounded-lg transition active:scale-95">Добавить</button>
+                </div>
+              )}
             </div>
           )}
         </div>
