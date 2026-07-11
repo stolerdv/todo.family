@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useCallback, type CSSProperties } from 'r
 import type { Account, DepositRate, Txn, TxnType, FinanceSettings, Category, Budget, Space } from '@/lib/finance'
 import { Dates } from '@/lib/trackerStats'
 import {
-  accountValue, depositValue, effectiveRate, formatMoney, combinedTotal, currenciesInUse,
+  accountValue, depositValue, effectiveRate, formatMoney, combinedTotal, currenciesInUse, convert,
   categorySpend, categoryMeta, ACCOUNT_TYPES, typeLabel,
 } from '@/lib/financeCalc'
 import '../tracker/tracker.css'
@@ -21,7 +21,7 @@ function parseMoney(s: string): number {
 }
 
 type View = { name: 'list' | 'detail'; id?: string }
-type Modal = null | 'account' | 'op' | 'menu' | 'rates' | 'cats' | 'budgets' | 'space'
+type Modal = null | 'account' | 'op' | 'menu' | 'rates' | 'cats' | 'budgets' | 'space' | 'reports'
 
 export default function FinancePage() {
   const [spaces, setSpaces] = useState<Space[]>([])
@@ -313,7 +313,8 @@ export default function FinancePage() {
 
       {modal === 'account' && <AccountSheet editing={editingAcc} today={today} onClose={() => { setModal(null); setEditingAcc(null) }} onSave={saveAccount} onDelete={deleteAccount} />}
       {modal === 'op' && <OperationSheet accounts={spendable} categories={categories} onClose={() => setModal(null)} onSave={addOp} onTransfer={addTransfer} onAddAccount={() => openAccountSheet(null)} />}
-      {modal === 'menu' && <SettingsMenu onClose={() => setModal(null)} onRates={() => setModal('rates')} onCats={() => setModal('cats')} onBudgets={() => setModal('budgets')} onSpaces={() => setModal('space')} />}
+      {modal === 'menu' && <SettingsMenu onClose={() => setModal(null)} onReports={() => setModal('reports')} onRates={() => setModal('rates')} onCats={() => setModal('cats')} onBudgets={() => setModal('budgets')} onSpaces={() => setModal('space')} />}
+      {modal === 'reports' && <ReportsSheet accounts={active} txns={txns} categories={categories} settings={settings} today={today} onClose={() => setModal('menu')} />}
       {modal === 'space' && (
         <SpaceSheet
           spaces={spaces} spaceId={spaceId} myId={myId}
@@ -564,12 +565,12 @@ function DetailView({ acc, txns, today, catInfo, accountName, onBack, onEdit, on
         </>
       )}
 
-      {!isDeposit && txns.length > 0 && (
-        <div className="tk-block" style={{ padding: '6px 16px' }}>
-          <div style={{ padding: '10px 0 4px', color: 'var(--tk-faint)', fontSize: 12, fontWeight: 700, textTransform: 'uppercase' }}>Операции</div>
-          {txns.slice(0, 40).map(t => <OpRow key={t.id} t={t} info={catInfo(t.category)} fromName={accountName(t.accountId)} toName={t.toAccountId ? accountName(t.toAccountId) : ''} currency={acc.currency} onDelete={onDeleteOp} />)}
-        </div>
-      )}
+      <div className="tk-block" style={{ padding: '6px 16px' }}>
+        <div style={{ padding: '10px 0 4px', color: 'var(--tk-faint)', fontSize: 12, fontWeight: 700, textTransform: 'uppercase' }}>История операций{txns.length ? ` · ${txns.length}` : ''}</div>
+        {txns.length > 0
+          ? txns.map(t => <OpRow key={t.id} t={t} info={catInfo(t.category)} fromName={accountName(t.accountId)} toName={t.toAccountId ? accountName(t.toAccountId) : ''} currency={acc.currency} onDelete={onDeleteOp} />)
+          : <p className="tk-hint" style={{ padding: '4px 0 10px' }}>Пока нет операций по этому счёту. {isDeposit ? 'Пополнения и переводы появятся здесь.' : 'Добавь операцию через «+».'}</p>}
+      </div>
 
       <div className="tk-sheet-actions" style={{ marginTop: 8 }}>
         <button className="tk-btn-ghost" onClick={() => onEdit(acc)}>✏️ Изменить счёт</button>
@@ -691,7 +692,7 @@ function OperationSheet({ accounts, categories, onClose, onSave, onTransfer, onA
 }
 
 // ── Меню настроек ────────────────────────────────────────────────────────────────
-function SettingsMenu({ onClose, onRates, onCats, onBudgets, onSpaces }: { onClose: () => void; onRates: () => void; onCats: () => void; onBudgets: () => void; onSpaces: () => void }) {
+function SettingsMenu({ onClose, onReports, onRates, onCats, onBudgets, onSpaces }: { onClose: () => void; onReports: () => void; onRates: () => void; onCats: () => void; onBudgets: () => void; onSpaces: () => void }) {
   return (
     <div className="tk-sheet">
       <div className="tk-sheet-backdrop" onClick={onClose} />
@@ -699,6 +700,7 @@ function SettingsMenu({ onClose, onRates, onCats, onBudgets, onSpaces }: { onClo
         <div className="tk-sheet-grab" />
         <h2>Настройки</h2>
         <div className="tk-sheet-actions">
+          <button className="tk-btn-ghost" onClick={onReports}>📊 Тенденции и отчёты</button>
           <button className="tk-btn-ghost" onClick={onSpaces}>👥 Кабинеты и доступ</button>
           <button className="tk-btn-ghost" onClick={onRates}>💱 Курсы валют</button>
           <button className="tk-btn-ghost" onClick={onCats}>🏷 Категории</button>
@@ -1022,6 +1024,220 @@ function RatesSheet({ settings, onClose, onSave }: { settings: FinanceSettings; 
         ))}
         <div className="tk-sheet-actions"><button className="tk-btn-primary" onClick={submit}>Сохранить курсы</button><button className="tk-btn-ghost" onClick={onClose}>Отмена</button></div>
       </div>
+    </div>
+  )
+}
+
+// ── Тенденции / отчёты ───────────────────────────────────────────────────────────
+function addMonth(ym: string, n: number): string {
+  const [y, m] = ym.split('-').map(Number)
+  const d = new Date(y, m - 1 + n, 1)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+function monthLabel(ym: string): string {
+  const [y, m] = ym.split('-').map(Number)
+  const s = new Date(y, m - 1, 1).toLocaleDateString('ru-RU', { month: 'short' }).replace('.', '')
+  return m === 1 ? `${s} ${String(y).slice(2)}` : s
+}
+function monthLabelFull(ym: string): string {
+  const [y, m] = ym.split('-').map(Number)
+  return new Date(y, m - 1, 1).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' })
+}
+function formatShort(n: number): string {
+  const a = Math.abs(n)
+  if (a >= 1e6) return (n / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace('.0', '') + 'M'
+  if (a >= 1e3) return Math.round(n / 1e3) + 'k'
+  return String(Math.round(n))
+}
+
+type RepTab = 'expense' | 'income' | 'money'
+
+function ReportsSheet({ accounts, txns, categories, settings, today, onClose }: {
+  accounts: Account[]; txns: Txn[]; categories: Category[]; settings: FinanceSettings; today: string; onClose: () => void
+}) {
+  const [tab, setTab] = useState<RepTab>('expense')
+  const [cat, setCat] = useState('') // '' = все категории
+
+  const base = settings.baseCurrency || currenciesInUse(accounts)[0] || '₸'
+  const eff = useMemo<FinanceSettings>(() => ({ baseCurrency: base, rates: settings.rates }), [base, settings.rates])
+  const curOf = useCallback((id: string) => accounts.find(a => a.id === id)?.currency ?? base, [accounts, base])
+  const toBase = useCallback((amt: number, accId: string) => convert(amt, curOf(accId), eff) ?? amt, [curOf, eff])
+
+  const months = useMemo(() => {
+    const cur = today.slice(0, 7)
+    let earliest = cur
+    for (const t of txns) { const mk = t.day.slice(0, 7); if (mk < earliest) earliest = mk }
+    const all: string[] = []
+    let m = earliest
+    let guard = 0
+    while (m <= cur && guard < 120) { all.push(m); m = addMonth(m, 1); guard++ }
+    return all.slice(-12)
+  }, [txns, today])
+
+  const flowData = useMemo(() => {
+    if (tab === 'money') return []
+    const map: Record<string, number> = Object.fromEntries(months.map(mk => [mk, 0]))
+    for (const t of txns) {
+      if (t.type !== tab) continue
+      if (cat && t.category !== cat) continue
+      const mk = t.day.slice(0, 7)
+      if (mk in map) map[mk] += toBase(t.amount, t.accountId)
+    }
+    return months.map(mk => ({ month: mk, value: map[mk] }))
+  }, [tab, cat, months, txns, toBase])
+
+  // деньги по месяцам: от текущего итога назад, вычитая чистый поток каждого месяца (оценка)
+  const moneyData = useMemo(() => {
+    const net: Record<string, number> = Object.fromEntries(months.map(mk => [mk, 0]))
+    for (const t of txns) {
+      const mk = t.day.slice(0, 7)
+      if (!(mk in net)) continue
+      if (t.type === 'income') net[mk] += toBase(t.amount, t.accountId)
+      else if (t.type === 'expense') net[mk] -= toBase(t.amount, t.accountId)
+    }
+    const currentTotal = combinedTotal(accounts, today, eff).total
+    const end: Record<string, number> = {}
+    let running = currentTotal
+    for (let i = months.length - 1; i >= 0; i--) { end[months[i]] = running; running -= net[months[i]] || 0 }
+    return months.map(mk => ({ month: mk, value: end[mk] }))
+  }, [months, txns, toBase, accounts, today, eff])
+
+  const data = tab === 'money' ? moneyData : flowData
+  const catList = categories.filter(c => c.kind === (tab === 'income' ? 'income' : 'expense'))
+  const total = flowData.reduce((s, d) => s + d.value, 0)
+  const nonEmpty = flowData.filter(d => d.value > 0).length
+  const avg = nonEmpty ? total / nonEmpty : 0
+  const color = tab === 'expense' ? 'var(--tk-danger)' : tab === 'income' ? 'var(--tk-good)' : 'var(--tk-accent)'
+
+  const chip = (active: boolean): CSSProperties => ({
+    flex: '0 0 auto', whiteSpace: 'nowrap', cursor: 'pointer', padding: '7px 13px', borderRadius: 999,
+    fontSize: 13, fontWeight: 700, background: active ? 'var(--tk-accent)' : 'var(--tk-card)',
+    color: active ? '#fff' : 'var(--tk-muted)', border: `1px solid ${active ? 'var(--tk-accent)' : 'var(--tk-line)'}`,
+  })
+
+  return (
+    <div className="tk-sheet">
+      <div className="tk-sheet-backdrop" onClick={onClose} />
+      <div className="tk-sheet-card" style={{ maxHeight: '92vh' }}>
+        <div className="tk-sheet-grab" />
+        <h2>Тенденции</h2>
+
+        <div className="tk-field">
+          <div className="tk-seg">
+            <button type="button" className={tab === 'expense' ? 'tk-sel' : ''} onClick={() => { setTab('expense'); setCat('') }}>Расходы</button>
+            <button type="button" className={tab === 'income' ? 'tk-sel' : ''} onClick={() => { setTab('income'); setCat('') }}>Доходы</button>
+            <button type="button" className={tab === 'money' ? 'tk-sel' : ''} onClick={() => setTab('money')}>Деньги</button>
+          </div>
+        </div>
+
+        {tab !== 'money' && (
+          <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 12, margin: '-2px 0 6px' }}>
+            <button style={chip(cat === '')} onClick={() => setCat('')}>Все</button>
+            {catList.map(c => <button key={c.id} style={chip(cat === c.id)} onClick={() => setCat(c.id)}>{c.emoji} {c.name}</button>)}
+          </div>
+        )}
+
+        {tab !== 'money' ? (
+          <>
+            <div style={{ display: 'flex', gap: 14, margin: '2px 2px 14px' }}>
+              <div><div style={{ color: 'var(--tk-muted)', fontSize: 12, fontWeight: 600 }}>Всего за период</div><div style={{ fontSize: 20, fontWeight: 800, color }}>{formatMoney(total, base)}</div></div>
+              <div><div style={{ color: 'var(--tk-muted)', fontSize: 12, fontWeight: 600 }}>В среднем / мес</div><div style={{ fontSize: 20, fontWeight: 800 }}>{formatMoney(avg, base)}</div></div>
+            </div>
+            <MonthBars data={data} color={color} base={base} />
+          </>
+        ) : (
+          <>
+            <p className="tk-hint" style={{ marginTop: 0 }}>Сколько денег на всех счетах было в конце каждого месяца (в {base}). Оценка по операциям — ручные правки баланса и рост депозитов в прошлом не учитываются.</p>
+            <MoneyTrend data={moneyData} base={base} />
+          </>
+        )}
+
+        {data.every(d => d.value === 0) && <p className="tk-hint" style={{ textAlign: 'center', padding: '20px 0' }}>Пока нет данных за этот период.</p>}
+
+        <div className="tk-sheet-actions" style={{ marginTop: 10 }}><button className="tk-btn-ghost" onClick={onClose}>Закрыть</button></div>
+      </div>
+    </div>
+  )
+}
+
+function MonthBars({ data, color, base }: { data: { month: string; value: number }[]; color: string; base: string }) {
+  const [sel, setSel] = useState(data.length - 1)
+  const max = Math.max(1, ...data.map(d => d.value))
+  const cur = data[Math.min(sel, data.length - 1)]
+  return (
+    <div>
+      {cur && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8, padding: '0 2px' }}>
+          <span style={{ color: 'var(--tk-muted)', fontSize: 13, fontWeight: 600, textTransform: 'capitalize' }}>{monthLabelFull(cur.month)}</span>
+          <span style={{ fontSize: 16, fontWeight: 800, color }}>{formatMoney(cur.value, base)}</span>
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 6, overflowX: 'auto', alignItems: 'flex-end', paddingBottom: 4 }}>
+        {data.map((d, i) => (
+          <button key={d.month} onClick={() => setSel(i)} style={{
+            flex: '1 0 auto', minWidth: 34, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5,
+            background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+          }}>
+            <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tk-faint)', height: 13 }}>{d.value > 0 ? formatShort(d.value) : ''}</span>
+            <span style={{ width: '100%', maxWidth: 30, height: 108, display: 'flex', alignItems: 'flex-end', background: 'var(--tk-card-2)', borderRadius: 7 }}>
+              <span style={{ width: '100%', height: `${Math.max(d.value > 0 ? 6 : 0, (d.value / max) * 100)}%`, background: color, borderRadius: 7, opacity: i === sel ? 1 : 0.55, transition: 'opacity .15s, height .3s ease' }} />
+            </span>
+            <span style={{ fontSize: 10.5, fontWeight: i === sel ? 800 : 600, color: i === sel ? 'var(--tk-text)' : 'var(--tk-faint)', textTransform: 'capitalize' }}>{monthLabel(d.month)}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function MoneyTrend({ data, base }: { data: { month: string; value: number }[]; base: string }) {
+  const [sel, setSel] = useState(data.length - 1)
+  const vals = data.map(d => d.value)
+  const max = Math.max(...vals, 0), min = Math.min(...vals, 0)
+  const span = (max - min) || 1
+  const H = 150, pad = 22
+  const stepX = 46
+  const W = Math.max((data.length - 1) * stepX + pad * 2, 280)
+  const x = (i: number) => pad + i * ((W - 2 * pad) / Math.max(1, data.length - 1))
+  const y = (v: number) => pad + (1 - (v - min) / span) * (H - 2 * pad)
+  const line = data.map((d, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(d.value).toFixed(1)}`).join(' ')
+  const area = `${line} L${x(data.length - 1).toFixed(1)},${H - pad} L${x(0).toFixed(1)},${H - pad} Z`
+  const cur = data[Math.min(sel, data.length - 1)]
+  const first = data[0]?.value ?? 0
+  const change = cur ? cur.value - first : 0
+
+  return (
+    <div>
+      {cur && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6, padding: '0 2px' }}>
+          <span style={{ color: 'var(--tk-muted)', fontSize: 13, fontWeight: 600, textTransform: 'capitalize' }}>{monthLabelFull(cur.month)}</span>
+          <span style={{ fontSize: 16, fontWeight: 800, color: 'var(--tk-accent)' }}>{formatMoney(cur.value, base)}</span>
+        </div>
+      )}
+      <div style={{ overflowX: 'auto', paddingBottom: 4 }}>
+        <svg width={W} height={H} style={{ display: 'block' }}>
+          <defs>
+            <linearGradient id="fin-money-grad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="var(--tk-accent)" stopOpacity="0.28" />
+              <stop offset="100%" stopColor="var(--tk-accent)" stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          <path d={area} fill="url(#fin-money-grad)" />
+          <path d={line} fill="none" stroke="var(--tk-accent)" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+          {data.map((d, i) => (
+            <g key={d.month} onClick={() => setSel(i)} style={{ cursor: 'pointer' }}>
+              <circle cx={x(i)} cy={y(d.value)} r={i === sel ? 6 : 4} fill={i === sel ? 'var(--tk-accent)' : 'var(--tk-bg)'} stroke="var(--tk-accent)" strokeWidth="2.5" />
+              <rect x={x(i) - stepX / 2} y="0" width={stepX} height={H} fill="transparent" />
+              <text x={x(i)} y={H - 6} textAnchor="middle" fontSize="10.5" fontWeight={i === sel ? 800 : 600} fill={i === sel ? 'var(--tk-text)' : 'var(--tk-faint)'} style={{ textTransform: 'capitalize' }}>{monthLabel(d.month)}</text>
+            </g>
+          ))}
+        </svg>
+      </div>
+      {data.length > 1 && (
+        <div style={{ textAlign: 'center', marginTop: 4, fontSize: 12.5, color: 'var(--tk-muted)' }}>
+          За период: <b style={{ color: change >= 0 ? 'var(--tk-good)' : 'var(--tk-danger)' }}>{change >= 0 ? '+' : '−'}{formatMoney(Math.abs(change), base)}</b>
+        </div>
+      )}
     </div>
   )
 }
