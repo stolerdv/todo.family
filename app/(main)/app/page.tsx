@@ -45,6 +45,31 @@ function dueDateLabel(dueDate: string): { text: string; color: string } | null {
 const HOME_VIEW_ID     = '__home__'
 const PRIORITY_VIEW_ID = '__priority__'
 const ARCHIVE_VIEW_ID  = '__archive__'
+const CALENDAR_VIEW_ID = '__calendar__'
+
+// ── Помощники дат для календаря ──────────────────────────────────────────────────
+const WEEKDAY_NAMES = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
+function ymKey(d: Date): string { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` }
+function dayKey(d: Date): string { return `${ymKey(d)}-${String(d.getDate()).padStart(2, '0')}` }
+function addMonthYm(ym: string, n: number): string {
+  const [y, m] = ym.split('-').map(Number)
+  return ymKey(new Date(y, m - 1 + n, 1))
+}
+function monthLabelRu(ym: string): string {
+  const [y, m] = ym.split('-').map(Number)
+  return new Date(y, m - 1, 1).toLocaleDateString('ru', { month: 'long', year: 'numeric' })
+}
+// сетка месяца: массив ячеек (день 'YYYY-MM-DD' или null для пустых), выровнено по неделям (Пн=первый)
+function monthCells(ym: string): (string | null)[] {
+  const [y, m] = ym.split('-').map(Number)
+  const startOffset = (new Date(y, m - 1, 1).getDay() + 6) % 7
+  const daysInMonth = new Date(y, m, 0).getDate()
+  const cells: (string | null)[] = []
+  for (let i = 0; i < startOffset; i++) cells.push(null)
+  for (let d = 1; d <= daysInMonth; d++) cells.push(`${ym}-${String(d).padStart(2, '0')}`)
+  while (cells.length % 7 !== 0) cells.push(null)
+  return cells
+}
 
 export default function AppPage() {
   const router = useRouter()
@@ -72,6 +97,10 @@ export default function AppPage() {
   const [copied, setCopied] = useState(false)
   const [quickAddOpen, setQuickAddOpen] = useState(false)
   const [quickAddSection, setQuickAddSection] = useState('')
+  const [calMonth, setCalMonth] = useState(() => ymKey(new Date()))
+  const [calSelected, setCalSelected] = useState(() => dayKey(new Date()))
+  const [calNewTitle, setCalNewTitle] = useState('')
+  const [calSection, setCalSection] = useState('')
   const quickAddRef = useRef<HTMLInputElement>(null)
   const quickSectionRef = useRef<HTMLSelectElement>(null)
   const [flashingTask, setFlashingTask]     = useState<string | null>(null)
@@ -239,6 +268,22 @@ export default function AppPage() {
   const isHomeView     = activeSection === HOME_VIEW_ID
   const isPriorityView = activeSection === PRIORITY_VIEW_ID
   const isArchiveView  = activeSection === ARCHIVE_VIEW_ID
+  const isCalendarView = activeSection === CALENDAR_VIEW_ID
+
+  // создать «мероприятие» — задачу с дедлайном на выбранный день (в первый/выбранный раздел)
+  async function addEvent(day: string, title: string, sectionId: string) {
+    if (!title.trim() || !sectionId) return
+    const tempId = `temp-${Date.now()}`
+    setTasks(prev => [...prev, { id: tempId, sectionId, title: title.trim(), state: 'Todo', createdAt: '', priority: 'None', dueDate: day }])
+    try {
+      const res = await fetch('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sectionId, title: title.trim() }) })
+      const created: Task = await res.json()
+      await fetch(`/api/tasks/${created.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dueDate: day }) })
+      setTasks(prev => prev.map(t => t.id === tempId ? { ...created, dueDate: day } : t))
+    } catch {
+      setTasks(prev => prev.filter(t => t.id !== tempId))
+    }
+  }
 
   const sectionTasks = isPriorityView
     ? tasks.filter(t => !DONE_STATES.includes(t.state) && activeSections.some(s => s.id === t.sectionId))
@@ -577,6 +622,7 @@ export default function AppPage() {
         {/* Special views */}
         {[
           { id: HOME_VIEW_ID,     icon: '🏠', label: 'Главная' },
+          { id: CALENDAR_VIEW_ID, icon: '📅', label: 'Календарь' },
           { id: PRIORITY_VIEW_ID, icon: '⭐', label: 'По важности' },
         ].map(v => (
           <div key={v.id}
@@ -807,6 +853,99 @@ export default function AppPage() {
     </>
   )
 
+  // ── Календарь ────────────────────────────────────────────────────────────────
+  const calByDay: Record<string, Task[]> = {}
+  const calSectionSet = new Set(activeSections.map(s => s.id))
+  for (const t of tasks) {
+    if (!t.dueDate || !calSectionSet.has(t.sectionId)) continue
+    ;(calByDay[t.dueDate.slice(0, 10)] ??= []).push(t)
+  }
+  const calTodayKey = dayKey(new Date())
+  const calSelTasks = calByDay[calSelected] ?? []
+  const calAddSection = calSection || activeSections[0]?.id || ''
+
+  const calendarContent = (
+    <>
+      <div className="pt-safe md:hidden bg-gray-950" />
+      <div className="px-4 md:px-6 py-3 border-b border-gray-800/80 flex items-center gap-3 shrink-0">
+        <button className="md:hidden text-gray-500 hover:text-gray-300 transition p-1 -ml-1" onClick={() => setSidebarOpen(true)}>
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
+        </button>
+        <h1 className="font-semibold text-base flex-1">📅 Календарь</h1>
+        <div className="flex items-center gap-1">
+          <button onClick={() => setCalMonth(m => addMonthYm(m, -1))} className="text-gray-500 hover:text-gray-200 px-2 py-1 rounded-lg hover:bg-gray-800 transition">‹</button>
+          <span className="text-sm text-gray-300 capitalize min-w-[130px] text-center">{monthLabelRu(calMonth)}</span>
+          <button onClick={() => setCalMonth(m => addMonthYm(m, 1))} className="text-gray-500 hover:text-gray-200 px-2 py-1 rounded-lg hover:bg-gray-800 transition">›</button>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-3 md:px-6 py-4">
+        <div className="grid grid-cols-7 mb-1">
+          {WEEKDAY_NAMES.map(w => <div key={w} className="text-center text-[11px] text-gray-600 font-medium py-1">{w}</div>)}
+        </div>
+        <div className="grid grid-cols-7 gap-1">
+          {monthCells(calMonth).map((day, i) => {
+            if (!day) return <div key={i} />
+            const num = Number(day.slice(-2))
+            const has = calByDay[day]?.length ?? 0
+            const isToday = day === calTodayKey
+            const isSel = day === calSelected
+            return (
+              <button key={day} onClick={() => setCalSelected(day)}
+                className={`aspect-square rounded-xl flex flex-col items-center justify-center gap-0.5 text-sm transition relative
+                  ${isSel ? 'bg-indigo-600 text-white' : isToday ? 'bg-gray-800 text-indigo-300' : 'text-gray-300 hover:bg-gray-800/70'}`}>
+                <span className={isToday && !isSel ? 'font-bold' : ''}>{num}</span>
+                {has > 0 && <span className={`w-1.5 h-1.5 rounded-full ${isSel ? 'bg-white' : 'bg-indigo-400'}`} />}
+              </button>
+            )
+          })}
+        </div>
+
+        <div className="mt-5">
+          <p className="text-xs text-gray-600 uppercase tracking-wider mb-2 px-1">
+            {new Date(Number(calSelected.slice(0, 4)), Number(calSelected.slice(5, 7)) - 1, Number(calSelected.slice(8, 10))).toLocaleDateString('ru', { weekday: 'long', day: 'numeric', month: 'long' })}
+          </p>
+
+          {calSelTasks.length === 0 && <p className="text-gray-600 text-sm px-1 pb-2">На этот день ничего не запланировано.</p>}
+          <div className="space-y-1.5">
+            {calSelTasks.map(t => {
+              const meta = STATE_META[t.state]
+              const secName = sections.find(s => s.id === t.sectionId)?.name
+              return (
+                <button key={t.id} onClick={() => { setActiveSection(t.sectionId); setExpandedTask(t.id) }}
+                  className="w-full text-left flex items-center gap-2.5 bg-gray-900 border border-gray-800 rounded-xl px-3 py-2.5 hover:border-gray-700 transition">
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${meta.dot}`} />
+                  <span className={`flex-1 text-sm truncate ${DONE_STATES.includes(t.state) ? 'text-gray-500 line-through' : 'text-gray-200'}`}>{t.title}</span>
+                  <span className="text-xs text-gray-600 truncate max-w-[40%]">{secName}</span>
+                </button>
+              )
+            })}
+          </div>
+
+          {activeSections.length > 0 ? (
+            <div className="mt-3 border border-indigo-500/30 bg-gray-900 rounded-xl px-3 py-2.5">
+              <input value={calNewTitle} onChange={e => setCalNewTitle(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && calNewTitle.trim()) { addEvent(calSelected, calNewTitle, calAddSection); setCalNewTitle('') } }}
+                placeholder="Добавить мероприятие…" className="w-full bg-transparent outline-none text-sm placeholder-gray-600 text-gray-200 mb-2" />
+              <div className="flex items-center gap-2">
+                <select value={calAddSection} onChange={e => setCalSection(e.target.value)}
+                  className="flex-1 bg-gray-800 text-gray-300 text-xs rounded-lg px-2 py-1.5 outline-none border border-gray-700">
+                  {activeSections.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+                <button onClick={() => { if (calNewTitle.trim()) { addEvent(calSelected, calNewTitle, calAddSection); setCalNewTitle('') } }}
+                  disabled={!calNewTitle.trim()}
+                  className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-medium px-4 py-1.5 rounded-lg transition">Добавить</button>
+              </div>
+            </div>
+          ) : (
+            <p className="text-gray-600 text-xs mt-3 px-1">Сначала создай раздел, чтобы добавлять мероприятия.</p>
+          )}
+        </div>
+        <div className="pb-safe" />
+      </div>
+    </>
+  )
+
   return (
     <div className="flex h-full overflow-hidden">
       <aside className="hidden md:flex w-64 bg-gray-900/80 border-r border-gray-800/80 flex-col shrink-0">{sidebarContent}</aside>
@@ -817,7 +956,7 @@ export default function AppPage() {
         </div>
       )}
       <main className="flex-1 flex flex-col overflow-hidden bg-gray-950">
-        {isHomeView ? (
+        {isCalendarView ? calendarContent : isHomeView ? (
           <>
             <div className="pt-safe md:hidden bg-gray-950" />
             <div className="px-4 md:px-6 py-3 border-b border-gray-800/80 flex items-center gap-3 shrink-0">
