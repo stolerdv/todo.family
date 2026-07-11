@@ -38,9 +38,9 @@ export default function JoinPage({ params }: { params: { code: string } }) {
   }
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-gray-950">
+    <div className="flex items-center justify-center min-h-screen bg-black">
       <div className="bg-gray-900 border border-gray-800 rounded-2xl p-8 w-full max-w-sm flex flex-col items-center gap-5 text-center">
-        <div className="w-14 h-14 rounded-2xl bg-indigo-600/20 flex items-center justify-center text-2xl">👥</div>
+        <div className="w-14 h-14 rounded-2xl bg-accent-600/20 flex items-center justify-center text-2xl">👥</div>
 
         {state === 'loading' && <p className="text-gray-400">Загрузка...</p>}
 
@@ -49,7 +49,7 @@ export default function JoinPage({ params }: { params: { code: string } }) {
             <h1 className="text-xl font-bold">Войдите чтобы присоединиться</h1>
             <p className="text-gray-500 text-sm">Нужен аккаунт чтобы получить доступ к разделу</p>
             <button onClick={() => router.push(`/login?next=/join/${params.code}`)}
-              className="w-full bg-indigo-600 hover:bg-indigo-500 rounded-xl py-3 text-sm font-medium transition">
+              className="w-full bg-accent-600 hover:bg-accent-500 text-[#120a00] font-semibold rounded-xl py-3 text-sm font-medium transition">
               Войти
             </button>
             <button onClick={() => router.push(`/register?next=/join/${params.code}`)}
@@ -66,7 +66,7 @@ export default function JoinPage({ params }: { params: { code: string } }) {
               Вас приглашают в раздел <span className="text-white font-semibold">«{sectionName}»</span>
             </p>
             <button onClick={join}
-              className="w-full bg-indigo-600 hover:bg-indigo-500 rounded-xl py-3 text-sm font-medium transition">
+              className="w-full bg-accent-600 hover:bg-accent-500 text-[#120a00] font-semibold rounded-xl py-3 text-sm font-medium transition">
               Принять приглашение
             </button>
             <button onClick={() => router.push('/app')}

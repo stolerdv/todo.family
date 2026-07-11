@@ -347,7 +347,7 @@ export default function AppPage() {
   if (loading) return (
     <div className="flex items-center justify-center min-h-screen">
       <div className="flex flex-col items-center gap-3">
-        <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+        <div className="w-8 h-8 border-2 border-accent-500 border-t-transparent rounded-full animate-spin" />
         <p className="text-gray-600 text-sm">Загрузка...</p>
       </div>
     </div>
@@ -459,7 +459,7 @@ export default function AppPage() {
               <div className="flex items-center gap-2 flex-1 min-w-[80px]">
                 <div className="flex-1 h-1.5 bg-gray-800 rounded-full overflow-hidden">
                   <div className={`h-full rounded-full transition-all duration-700 ease-out ${
-                    pct === 100 ? 'bg-green-500' : flashingTask === task.id ? 'bg-indigo-400' : 'bg-indigo-600'
+                    pct === 100 ? 'bg-green-500' : flashingTask === task.id ? 'bg-accent-400' : 'bg-accent-600'
                   } ${flashingTask === task.id ? 'shadow-[0_0_8px_2px_rgba(99,102,241,0.6)]' : ''}`}
                     style={{ width: `${pct}%` }} />
                 </div>
@@ -517,7 +517,7 @@ export default function AppPage() {
 
                     {/* Note */}
                     <button onClick={() => setEditingNoteFor(editingNoteFor === sub.id ? null : sub.id)}
-                      className={`w-7 h-7 flex items-center justify-center rounded-lg transition shrink-0 ${sub.note ? 'text-indigo-400 bg-indigo-500/10' : 'text-gray-700 hover:text-gray-500 hover:bg-gray-800'}`}>
+                      className={`w-7 h-7 flex items-center justify-center rounded-lg transition shrink-0 ${sub.note ? 'text-accent-400 bg-accent-500/10' : 'text-gray-700 hover:text-gray-500 hover:bg-gray-800'}`}>
                       <svg className="w-3.5 h-3.5" fill={sub.note ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
                       </svg>
@@ -537,7 +537,7 @@ export default function AppPage() {
                             onBlur={e => { patchSubtask(sub.id, { note: e.target.value }); setEditingNoteFor(null) }}
                             onKeyDown={e => { if (e.key === 'Escape') setEditingNoteFor(null) }}
                             placeholder="Комментарий к выполнению..." rows={2}
-                            className="w-full bg-gray-800/80 border border-gray-700/50 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-500/50 resize-none placeholder-gray-600" />
+                            className="w-full bg-gray-800/80 border border-gray-700/50 rounded-xl px-3 py-2 text-sm outline-none focus:border-accent-500/50 resize-none placeholder-gray-600" />
                         : <p onClick={() => setEditingNoteFor(sub.id)}
                             className="text-sm text-gray-600 italic cursor-pointer hover:text-gray-400 bg-gray-800/40 rounded-xl px-3 py-2">
                             {sub.note}
@@ -549,7 +549,7 @@ export default function AppPage() {
 
               {addingSubtaskFor === task.id ? (
                 <div className="flex items-center gap-3 py-2.5">
-                  <div className="w-6 h-6 rounded-lg border-2 border-indigo-500/40 shrink-0" />
+                  <div className="w-6 h-6 rounded-lg border-2 border-accent-500/40 shrink-0" />
                   <input ref={newSubtaskRef} autoFocus
                     onKeyDown={e => { if (e.key === 'Enter') addSubtask(task.id); if (e.key === 'Escape') setAddingSubtaskFor(null) }}
                     onBlur={() => addSubtask(task.id)}
@@ -571,7 +571,7 @@ export default function AppPage() {
               {loadingComments === task.id && <p className="text-xs text-gray-700 mb-2">Загрузка...</p>}
               {taskComments.map(c => (
                 <div key={c.id} className="group flex gap-2.5 mb-2.5">
-                  <div className="w-6 h-6 rounded-full bg-indigo-600/30 flex items-center justify-center shrink-0 text-xs font-medium text-indigo-300 mt-0.5">
+                  <div className="w-6 h-6 rounded-full bg-accent-600/30 flex items-center justify-center shrink-0 text-xs font-medium text-accent-300 mt-0.5">
                     {c.username[0]?.toUpperCase()}
                   </div>
                   <div className="flex-1 bg-gray-800/50 rounded-xl px-3 py-2">
@@ -593,8 +593,8 @@ export default function AppPage() {
               <div className="flex gap-2 mt-2">
                 <input ref={commentRef} placeholder="Написать комментарий..."
                   onKeyDown={e => { if (e.key === 'Enter') addComment(task.id) }}
-                  className="flex-1 bg-gray-800/60 border border-gray-700/50 rounded-xl px-3 py-2 text-sm outline-none focus:border-indigo-500/50 placeholder-gray-700" />
-                <button onClick={() => addComment(task.id)} className="bg-indigo-600 hover:bg-indigo-500 px-3 rounded-xl transition text-sm">
+                  className="flex-1 bg-gray-800/60 border border-gray-700/50 rounded-xl px-3 py-2 text-sm outline-none focus:border-accent-500/50 placeholder-gray-700" />
+                <button onClick={() => addComment(task.id)} className="bg-accent-600 hover:bg-accent-500 text-[#120a00] font-semibold px-3 rounded-xl transition text-sm">
                   ↵
                 </button>
               </div>
@@ -615,7 +615,7 @@ export default function AppPage() {
           <span className="font-bold text-sm tracking-wide">Напоминания</span>
           <button onClick={logout} className="text-gray-600 hover:text-gray-400 text-xs transition px-1 py-0.5 rounded">Выйти</button>
         </div>
-        {username && <p className="text-xs text-indigo-400/70">@{username}</p>}
+        {username && <p className="text-xs text-accent-400/70">@{username}</p>}
       </div>
 
       <nav className="flex-1 overflow-y-auto p-2 space-y-0.5">
@@ -626,7 +626,7 @@ export default function AppPage() {
           { id: PRIORITY_VIEW_ID, icon: '⭐', label: 'По важности' },
         ].map(v => (
           <div key={v.id}
-            className={`flex items-center gap-2.5 rounded-xl px-3 py-2.5 cursor-pointer text-sm transition ${activeSection === v.id ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'}`}
+            className={`flex items-center gap-2.5 rounded-xl px-3 py-2.5 cursor-pointer text-sm transition ${activeSection === v.id ? 'bg-accent-600 text-[#120a00]' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'}`}
             onClick={() => { setActiveSection(v.id); setSidebarOpen(false) }}
           >
             <span>{v.icon}</span> {v.label}
@@ -681,7 +681,7 @@ export default function AppPage() {
           return (
             <div key={s.id}>
               <div className={`group flex items-center justify-between rounded-xl px-3 py-2.5 cursor-pointer text-sm transition-all ${
-                isActive ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
+                isActive ? 'bg-accent-600 text-[#120a00] shadow-lg shadow-accent-500/20' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
               }`} onClick={() => { setActiveSection(s.id); setSidebarOpen(false) }}>
                 <div className="flex items-center gap-1.5 flex-1 min-w-0">
                   {isSharedSection && <span className="text-xs shrink-0">👥</span>}
@@ -691,7 +691,7 @@ export default function AppPage() {
                   {count > 0 && <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${isActive ? 'bg-white/20' : 'bg-gray-700 text-gray-400'}`}>{count}</span>}
                   {!isSharedSection && (
                     <button onClick={e => { e.stopPropagation(); setShareMenuId(shareMenuId === s.id ? null : s.id) }}
-                      className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-indigo-400 transition w-5 h-5 flex items-center justify-center rounded text-xs" title="Поделиться">
+                      className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-accent-400 transition w-5 h-5 flex items-center justify-center rounded text-xs" title="Поделиться">
                       🔗
                     </button>
                   )}
@@ -712,7 +712,7 @@ export default function AppPage() {
                     <input readOnly value={`${typeof window !== 'undefined' ? window.location.origin : ''}/join/${s.shareCode}`}
                       className="flex-1 bg-gray-900 rounded-lg px-2 py-1.5 text-gray-300 outline-none text-xs min-w-0" />
                     <button onClick={() => { copyShareLink(s); setShareMenuId(null) }}
-                      className="bg-indigo-600 hover:bg-indigo-500 px-2.5 py-1.5 rounded-lg transition whitespace-nowrap">
+                      className="bg-accent-600 hover:bg-accent-500 text-[#120a00] font-semibold px-2.5 py-1.5 rounded-lg transition whitespace-nowrap">
                       {copied ? '✓' : 'Копировать'}
                     </button>
                   </div>
@@ -729,7 +729,7 @@ export default function AppPage() {
               onKeyDown={e => { if (e.key === 'Enter') addSection(); if (e.key === 'Escape') setAddingSection(false) }}
               onBlur={() => addSection()}
               placeholder="Название раздела..."
-              className="w-full bg-gray-800 border border-indigo-500/50 rounded-xl px-3 py-2.5 text-sm outline-none placeholder-gray-600" />
+              className="w-full bg-gray-800 border border-accent-500/50 rounded-xl px-3 py-2.5 text-sm outline-none placeholder-gray-600" />
           </div>
         ) : (
           <button onClick={() => setAddingSection(true)}
@@ -766,7 +766,7 @@ export default function AppPage() {
 
   const mainContent = (
     <>
-      <div className="pt-safe md:hidden bg-gray-950" />
+      <div className="pt-safe md:hidden bg-black" />
       <div className="px-4 md:px-6 py-3 border-b border-gray-800/80 flex items-center gap-3 shrink-0">
         <button className="md:hidden text-gray-500 hover:text-gray-300 transition p-1 -ml-1" onClick={() => setSidebarOpen(true)}>
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
@@ -785,7 +785,7 @@ export default function AppPage() {
           {/* Sort */}
           <div className="relative">
             <button onClick={() => setSortMenuOpen(v => !v)}
-              className={`text-xs px-2.5 py-1.5 rounded-full border transition ${sortMode !== 'default' ? 'border-indigo-500/40 text-indigo-400 bg-indigo-500/10' : 'border-gray-800 text-gray-600 hover:text-gray-400'}`}
+              className={`text-xs px-2.5 py-1.5 rounded-full border transition ${sortMode !== 'default' ? 'border-accent-500/40 text-accent-400 bg-accent-500/10' : 'border-gray-800 text-gray-600 hover:text-gray-400'}`}
               title="Сортировка">
               ↕
             </button>
@@ -793,7 +793,7 @@ export default function AppPage() {
               <div className="absolute right-0 top-9 z-50 bg-gray-900 border border-gray-700 rounded-xl shadow-xl p-1 min-w-[160px]">
                 {([['default','По умолчанию'],['priority','По важности'],['deadline','По дедлайну'],['created','По дате']] as [SortMode,string][]).map(([mode, label]) => (
                   <button key={mode} onClick={() => { setSortMode(mode); setSortMenuOpen(false) }}
-                    className={`w-full text-left text-sm px-3 py-2 rounded-lg transition ${sortMode === mode ? 'text-indigo-400 bg-indigo-500/10' : 'text-gray-300 hover:bg-gray-800'}`}>
+                    className={`w-full text-left text-sm px-3 py-2 rounded-lg transition ${sortMode === mode ? 'text-accent-400 bg-accent-500/10' : 'text-gray-300 hover:bg-gray-800'}`}>
                     {label}
                   </button>
                 ))}
@@ -804,7 +804,7 @@ export default function AppPage() {
           {!isPriorityView && !isArchiveView && (
             <button onClick={() => setShowDone(v => !v)}
               className={`text-xs px-3 py-1.5 rounded-full transition whitespace-nowrap ${
-                showDone ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-500/30' : 'text-gray-600 border border-gray-800 hover:border-gray-700 hover:text-gray-400'
+                showDone ? 'bg-accent-600/20 text-accent-400 border border-accent-500/30' : 'text-gray-600 border border-gray-800 hover:border-gray-700 hover:text-gray-400'
               }`}>
               {showDone ? 'Скрыть' : hiddenCount > 0 ? `+${hiddenCount}` : 'Готово'}
             </button>
@@ -833,7 +833,7 @@ export default function AppPage() {
 
         {!isPriorityView && !isArchiveView && (
           addingTask ? (
-            <div className="border border-indigo-500/40 bg-gray-900 rounded-2xl px-4 py-3.5">
+            <div className="border border-accent-500/40 bg-gray-900 rounded-2xl px-4 py-3.5">
               <input ref={newTaskRef} autoFocus
                 onKeyDown={e => { if (e.key === 'Enter') addTask(); if (e.key === 'Escape') setAddingTask(false) }}
                 onBlur={() => addTask()}
@@ -866,7 +866,7 @@ export default function AppPage() {
 
   const calendarContent = (
     <>
-      <div className="pt-safe md:hidden bg-gray-950" />
+      <div className="pt-safe md:hidden bg-black" />
       <div className="px-4 md:px-6 py-3 border-b border-gray-800/80 flex items-center gap-3 shrink-0">
         <button className="md:hidden text-gray-500 hover:text-gray-300 transition p-1 -ml-1" onClick={() => setSidebarOpen(true)}>
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
@@ -893,9 +893,9 @@ export default function AppPage() {
             return (
               <button key={day} onClick={() => setCalSelected(day)}
                 className={`aspect-square rounded-xl flex flex-col items-center justify-center gap-0.5 text-sm transition relative
-                  ${isSel ? 'bg-indigo-600 text-white' : isToday ? 'bg-gray-800 text-indigo-300' : 'text-gray-300 hover:bg-gray-800/70'}`}>
+                  ${isSel ? 'bg-accent-600 text-[#120a00]' : isToday ? 'bg-gray-800 text-accent-300' : 'text-gray-300 hover:bg-gray-800/70'}`}>
                 <span className={isToday && !isSel ? 'font-bold' : ''}>{num}</span>
-                {has > 0 && <span className={`w-1.5 h-1.5 rounded-full ${isSel ? 'bg-white' : 'bg-indigo-400'}`} />}
+                {has > 0 && <span className={`w-1.5 h-1.5 rounded-full ${isSel ? 'bg-white' : 'bg-accent-400'}`} />}
               </button>
             )
           })}
@@ -923,7 +923,7 @@ export default function AppPage() {
           </div>
 
           {activeSections.length > 0 ? (
-            <div className="mt-3 border border-indigo-500/30 bg-gray-900 rounded-xl px-3 py-2.5">
+            <div className="mt-3 border border-accent-500/30 bg-gray-900 rounded-xl px-3 py-2.5">
               <input value={calNewTitle} onChange={e => setCalNewTitle(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter' && calNewTitle.trim()) { addEvent(calSelected, calNewTitle, calAddSection); setCalNewTitle('') } }}
                 placeholder="Добавить мероприятие…" className="w-full bg-transparent outline-none text-sm placeholder-gray-600 text-gray-200 mb-2" />
@@ -934,7 +934,7 @@ export default function AppPage() {
                 </select>
                 <button onClick={() => { if (calNewTitle.trim()) { addEvent(calSelected, calNewTitle, calAddSection); setCalNewTitle('') } }}
                   disabled={!calNewTitle.trim()}
-                  className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-medium px-4 py-1.5 rounded-lg transition">Добавить</button>
+                  className="bg-accent-600 hover:bg-accent-500 text-[#120a00] font-semibold disabled:opacity-40 text-xs font-medium px-4 py-1.5 rounded-lg transition">Добавить</button>
               </div>
             </div>
           ) : (
@@ -955,10 +955,10 @@ export default function AppPage() {
           <aside className="relative w-72 bg-gray-900 border-r border-gray-800 flex flex-col h-full shadow-2xl">{sidebarContent}</aside>
         </div>
       )}
-      <main className="flex-1 flex flex-col overflow-hidden bg-gray-950">
+      <main className="flex-1 flex flex-col overflow-hidden bg-black">
         {isCalendarView ? calendarContent : isHomeView ? (
           <>
-            <div className="pt-safe md:hidden bg-gray-950" />
+            <div className="pt-safe md:hidden bg-black" />
             <div className="px-4 md:px-6 py-3 border-b border-gray-800/80 flex items-center gap-3 shrink-0">
               <button className="md:hidden text-gray-500 hover:text-gray-300 transition p-1 -ml-1" onClick={() => setSidebarOpen(true)}>
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
@@ -993,7 +993,7 @@ export default function AppPage() {
               <p className="text-gray-700 text-sm mt-1">Создайте первый раздел чтобы начать</p>
             </div>
             <button onClick={() => { setSidebarOpen(true); setTimeout(() => setAddingSection(true), 100) }}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white text-sm px-5 py-2.5 rounded-xl transition font-medium">
+              className="bg-accent-600 hover:bg-accent-500 text-[#120a00] font-semibold text-sm px-5 py-2.5 rounded-xl transition font-medium">
               + Создать раздел
             </button>
           </div>
@@ -1011,7 +1011,7 @@ export default function AppPage() {
       {isHomeView && activeSections.length > 0 && (
         <button
           onClick={() => { setQuickAddOpen(true); setQuickAddSection(activeSections[0].id) }}
-          className="fixed bottom-8 right-6 z-30 w-14 h-14 bg-indigo-600 hover:bg-indigo-500 rounded-full shadow-2xl shadow-indigo-500/40 flex items-center justify-center text-2xl transition active:scale-95"
+          className="fixed bottom-8 right-6 z-30 w-14 h-14 bg-accent-600 hover:bg-accent-500 text-[#120a00] font-semibold rounded-full shadow-2xl shadow-accent-500/40 flex items-center justify-center text-2xl transition active:scale-95"
         >+</button>
       )}
 
@@ -1026,19 +1026,19 @@ export default function AppPage() {
               autoFocus
               placeholder="Название задачи..."
               onKeyDown={e => { if (e.key === 'Enter') quickAdd(); if (e.key === 'Escape') setQuickAddOpen(false) }}
-              className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-sm outline-none focus:border-indigo-500 mb-3"
+              className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-sm outline-none focus:border-accent-500 mb-3"
             />
             <select
               ref={quickSectionRef}
               value={quickAddSection}
               onChange={e => setQuickAddSection(e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-sm outline-none focus:border-indigo-500 mb-4 text-gray-200"
+              className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-sm outline-none focus:border-accent-500 mb-4 text-gray-200"
             >
               {activeSections.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
             <div className="flex gap-2">
               <button onClick={quickAdd}
-                className="flex-1 bg-indigo-600 hover:bg-indigo-500 rounded-xl py-3 text-sm font-medium transition">
+                className="flex-1 bg-accent-600 hover:bg-accent-500 text-[#120a00] font-semibold rounded-xl py-3 text-sm font-medium transition">
                 Добавить
               </button>
               <button onClick={() => setQuickAddOpen(false)}

@@ -26,16 +26,28 @@ export default function SplashScreen() {
   return (
     <div
       style={{ transition: 'opacity 0.6s ease' }}
-      className={`fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-gray-950 ${
+      className={`fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-black overflow-hidden ${
         phase === 'exit' ? 'opacity-0' : phase === 'enter' ? 'opacity-0' : 'opacity-100'
       }`}
     >
+      {/* амбьентное янтарное свечение */}
+      <div
+        aria-hidden
+        style={{
+          background: 'radial-gradient(circle, rgba(255,122,26,.22), transparent 70%)',
+          transition: 'opacity 1s ease, transform 1s ease',
+          transform: visible ? 'scale(1)' : 'scale(.6)',
+        }}
+        className={`absolute w-[520px] h-[520px] rounded-full blur-2xl ${visible ? 'opacity-100' : 'opacity-0'}`}
+      />
+
       {/* Photo circle */}
       <div
         style={{ transition: 'transform 0.7s ease, opacity 0.7s ease' }}
-        className={`mb-6 ${visible && imgLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}`}
+        className={`relative mb-6 ${visible && imgLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}`}
       >
-        <div className="w-28 h-28 rounded-[26px] overflow-hidden border border-white/10 shadow-2xl bg-black">
+        <div className="w-28 h-28 rounded-[28px] overflow-hidden border border-white/10 bg-black"
+          style={{ boxShadow: '0 20px 60px -15px rgba(255,122,26,.5), 0 0 0 1px rgba(255,255,255,.04)' }}>
           {imgLoaded ? (
             <img
               src="/icon-512.png"
@@ -53,20 +65,20 @@ export default function SplashScreen() {
         style={{ transition: 'transform 0.7s ease 0.15s, opacity 0.7s ease 0.15s' }}
         className={`flex flex-col items-center gap-1.5 ${visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}`}
       >
-        <h1 className="text-4xl font-bold tracking-[0.3em] text-white pl-[0.3em]">Pen</h1>
-        <p className="text-xs text-gray-500 tracking-[0.25em] uppercase">Организация жизни</p>
+        <h1 className="relative text-4xl font-bold tracking-[0.3em] text-white pl-[0.3em]">Pen</h1>
+        <p className="relative text-xs text-[#ff7a1a]/80 tracking-[0.25em] uppercase">Организация жизни</p>
       </div>
 
       {/* Dots */}
       <div
         style={{ transition: 'opacity 0.7s ease 0.3s' }}
-        className={`flex gap-1.5 mt-10 ${visible ? 'opacity-100' : 'opacity-0'}`}
+        className={`relative flex gap-1.5 mt-10 ${visible ? 'opacity-100' : 'opacity-0'}`}
       >
         {[0, 1, 2].map(i => (
           <div
             key={i}
-            className="w-1.5 h-1.5 rounded-full bg-gray-600 animate-pulse"
-            style={{ animationDelay: `${i * 0.2}s` }}
+            className="w-1.5 h-1.5 rounded-full bg-[#ff7a1a] animate-pulse"
+            style={{ animationDelay: `${i * 0.2}s`, boxShadow: '0 0 8px rgba(255,122,26,.8)' }}
           />
         ))}
       </div>

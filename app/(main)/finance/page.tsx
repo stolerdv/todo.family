@@ -279,7 +279,7 @@ export default function FinancePage() {
 
   return (
     <div className="tk-root">
-      {loading ? <div className="tk-spin" /> : (
+      {loading ? <FinanceSkeleton /> : (
         <main className="tk-view">
           {view.name === 'list' && (
             <SpaceBar spaces={spaces} spaceId={spaceId} onSwitch={switchSpace} onManage={() => setModal('space')} />
@@ -327,6 +327,49 @@ export default function FinancePage() {
       {modal === 'budgets' && <BudgetsSheet categories={categories} budgets={budgets} txns={txns} accounts={accounts} settings={settings} today={today} onClose={() => setModal('menu')} onSet={setBudget} />}
       {toast && <div className="tk-toast">{toast}</div>}
     </div>
+  )
+}
+
+// ── Скелетон загрузки (повторяет раскладку списка) ───────────────────────────
+function FinanceSkeleton() {
+  return (
+    <main className="tk-view" aria-busy="true">
+      <div className="tk-skel-chips">
+        <div className="tk-skel tk-skel-chip" style={{ width: 110 }} />
+        <div className="tk-skel tk-skel-chip" style={{ width: 90 }} />
+        <div className="tk-skel tk-skel-chip" style={{ width: 44 }} />
+      </div>
+      <div className="tk-skel-hero">
+        <div className="tk-skel-main">
+          <div className="tk-skel tk-skel-line" style={{ width: '35%' }} />
+          <div className="tk-skel tk-skel-line" style={{ width: '55%', height: 22 }} />
+        </div>
+      </div>
+      <div className="tk-list">
+        {[0, 1, 2].map(i => (
+          <div key={i} className="tk-skel-row">
+            <div className="tk-skel tk-skel-avatar" />
+            <div className="tk-skel-main">
+              <div className="tk-skel tk-skel-line" style={{ width: `${55 - i * 8}%`, height: 14 }} />
+              <div className="tk-skel tk-skel-line" style={{ width: `${30 + i * 7}%`, height: 10 }} />
+            </div>
+            <div className="tk-skel tk-skel-line" style={{ width: 70, height: 16 }} />
+          </div>
+        ))}
+      </div>
+      <div className="tk-skel tk-skel-line" style={{ width: 130, margin: '24px 4px 10px' }} />
+      <div className="tk-list">
+        {[0, 1].map(i => (
+          <div key={i} className="tk-skel-row">
+            <div className="tk-skel tk-skel-circle" />
+            <div className="tk-skel-main">
+              <div className="tk-skel tk-skel-line" style={{ width: `${45 - i * 10}%`, height: 12 }} />
+            </div>
+            <div className="tk-skel tk-skel-line" style={{ width: 56, height: 14 }} />
+          </div>
+        ))}
+      </div>
+    </main>
   )
 }
 

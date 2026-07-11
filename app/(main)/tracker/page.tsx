@@ -126,7 +126,7 @@ export default function TrackerPage() {
   // ── рендер ───────────────────────────────────────────────────────────────────
   return (
     <div className="tk-root">
-      {loading ? <div className="tk-spin" /> : (
+      {loading ? <TrackerSkeleton /> : (
         <main className="tk-view">
           {view.name !== 'detail' && (
             <div className="tk-subtabs">
@@ -166,6 +166,38 @@ export default function TrackerPage() {
 
       {toast && <div className="tk-toast">{toast}</div>}
     </div>
+  )
+}
+
+// ── Скелетон загрузки (повторяет раскладку «Сегодня») ─────────────────────────
+function TrackerSkeleton() {
+  return (
+    <main className="tk-view" aria-busy="true">
+      <div className="tk-skel tk-skel-tabs" />
+      <div className="tk-page-head">
+        <div className="tk-skel tk-skel-line" style={{ width: 140 }} />
+        <div className="tk-skel tk-skel-line" style={{ width: 180, height: 26, marginTop: 10 }} />
+      </div>
+      <div className="tk-skel-hero">
+        <div className="tk-skel tk-skel-ring" />
+        <div className="tk-skel-main">
+          <div className="tk-skel tk-skel-line" style={{ width: '45%', height: 16 }} />
+          <div className="tk-skel tk-skel-line" style={{ width: '70%' }} />
+        </div>
+      </div>
+      <div className="tk-list">
+        {[0, 1, 2, 3].map(i => (
+          <div key={i} className="tk-skel-row">
+            <div className="tk-skel tk-skel-avatar" />
+            <div className="tk-skel-main">
+              <div className="tk-skel tk-skel-line" style={{ width: `${62 - i * 8}%`, height: 14 }} />
+              <div className="tk-skel tk-skel-line" style={{ width: `${38 + i * 6}%`, height: 10 }} />
+            </div>
+            <div className="tk-skel tk-skel-circle" />
+          </div>
+        ))}
+      </div>
+    </main>
   )
 }
 

@@ -20,19 +20,37 @@ const TABS = [
 
 export default function BottomNav() {
   const pathname = usePathname()
+  const activeIndex = TABS.findIndex(t => pathname === t.href || pathname.startsWith(t.href + '/'))
   return (
     <nav
-      className="shrink-0 flex items-stretch border-t border-white/10 bg-gray-950/95 backdrop-blur-xl"
+      className="relative shrink-0 flex items-stretch border-t border-white/[0.07] bg-black/80 backdrop-blur-2xl"
       style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
     >
-      {TABS.map(t => {
-        const active = pathname === t.href || pathname.startsWith(t.href + '/')
+      {/* скользящий янтарный индикатор активной вкладки */}
+      {activeIndex >= 0 && (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute top-0 h-[2.5px] rounded-full transition-transform duration-500"
+          style={{
+            width: `${100 / TABS.length}%`,
+            transform: `translateX(${activeIndex * 100}%)`,
+            transitionTimingFunction: 'cubic-bezier(.34,1.56,.64,1)',
+            background: 'linear-gradient(90deg, transparent, #ff7a1a, transparent)',
+            boxShadow: '0 0 16px 1px rgba(255,122,26,.6)',
+          }}
+        />
+      )}
+      {TABS.map((t, i) => {
+        const active = i === activeIndex
         return (
           <Link key={t.href} href={t.href}
-            className={`flex-1 flex flex-col items-center justify-center gap-1 py-2.5 text-[11px] font-semibold transition ${
-              active ? 'text-white' : 'text-gray-500'
+            className={`flex-1 flex flex-col items-center justify-center gap-1 py-2.5 text-[11px] font-semibold transition-colors duration-300 ${
+              active ? 'text-[#ff7a1a]' : 'text-gray-500 hover:text-gray-300'
             }`}>
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.4 : 2} strokeLinecap="round" strokeLinejoin="round">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth={active ? 2.4 : 2} strokeLinecap="round" strokeLinejoin="round"
+              className="transition-transform duration-300"
+              style={{ transform: active ? 'translateY(-1px) scale(1.08)' : 'none', filter: active ? 'drop-shadow(0 3px 8px rgba(255,122,26,.5))' : 'none' }}>
               {t.icon}
             </svg>
             <span>{t.label}</span>

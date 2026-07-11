@@ -1,11 +1,16 @@
 /* финансы — надстройка над tracker.css (общие tk- классы). */
 
 .fin-total-card {
-  background: linear-gradient(135deg, #1c2333, #221c33);
-  border: 1px solid var(--tk-line);
+  position: relative; overflow: hidden;
+  background:
+    radial-gradient(120% 140% at 100% 0%, color-mix(in srgb, var(--tk-accent) 20%, transparent), transparent 55%),
+    linear-gradient(150deg, var(--tk-card-2), var(--tk-card));
+  border: 1px solid color-mix(in srgb, var(--tk-accent) 22%, var(--tk-line));
   border-radius: var(--tk-radius);
   padding: 22px 20px; margin-bottom: 22px;
+  box-shadow: var(--tk-shadow);
 }
+.fin-big { background: linear-gradient(120deg, var(--tk-text), color-mix(in srgb, var(--tk-accent) 55%, var(--tk-text))); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
 .fin-total-card .tk-k { color: var(--tk-muted); font-size: 13px; font-weight: 600; }
 .fin-big { font-size: 38px; font-weight: 800; letter-spacing: -1.2px; margin-top: 4px; }
 .fin-total-split { display: flex; gap: 20px; margin-top: 14px; }
@@ -17,9 +22,10 @@
   display: flex; align-items: center; gap: 14px;
   background: var(--tk-card); border: 1px solid var(--tk-line);
   border-radius: var(--tk-radius); padding: 14px 16px; cursor: pointer;
-  transition: transform .12s ease, background .2s;
+  box-shadow: var(--tk-shadow);
+  transition: transform .16s cubic-bezier(.34,1.4,.64,1), border-color .2s, background .2s;
 }
-.fin-acc:active { transform: scale(.985); }
+.fin-acc:active { transform: scale(.985); border-color: color-mix(in srgb, var(--tk-accent) 30%, var(--tk-line)); }
 .fin-acc .emo { width: 44px; height: 44px; flex: 0 0 auto; display: grid; place-items: center; font-size: 22px; border-radius: 12px; }
 .fin-acc .mid { flex: 1; min-width: 0; }
 .fin-acc .nm { font-size: 17px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

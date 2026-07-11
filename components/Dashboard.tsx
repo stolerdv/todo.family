@@ -125,7 +125,7 @@ export default function Dashboard({ tasks, sections, subtasks, onTaskClick }: Pr
       {/* Stats row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: 'Активных задач', value: totalActive,    color: 'text-indigo-400', bg: 'bg-indigo-500/10 border-indigo-500/20' },
+          { label: 'Активных задач', value: totalActive,    color: 'text-accent-400', bg: 'bg-accent-500/10 border-accent-500/20' },
           { label: 'Просрочено',     value: overdueCount,   color: overdueCount > 0 ? 'text-red-400' : 'text-gray-400', bg: overdueCount > 0 ? 'bg-red-500/10 border-red-500/20' : 'bg-gray-800/40 border-gray-700/40' },
           { label: 'Сдать сегодня',  value: dueToday.length, color: dueToday.length > 0 ? 'text-orange-400' : 'text-gray-400', bg: dueToday.length > 0 ? 'bg-orange-500/10 border-orange-500/20' : 'bg-gray-800/40 border-gray-700/40' },
           { label: 'Критичных',      value: criticalCount,  color: criticalCount > 0 ? 'text-red-400' : 'text-gray-400', bg: criticalCount > 0 ? 'bg-red-500/10 border-red-500/20' : 'bg-gray-800/40 border-gray-700/40' },
@@ -168,8 +168,8 @@ export default function Dashboard({ tasks, sections, subtasks, onTaskClick }: Pr
               return (
                 <button key={i} onClick={() => setSelectedDay(isSelected ? null : ds)}
                   className={`relative flex flex-col items-center py-1.5 rounded-xl transition ${
-                    isSelected ? 'bg-indigo-600 text-white' :
-                    isToday    ? 'bg-indigo-500/20 text-indigo-300 font-semibold' :
+                    isSelected ? 'bg-accent-600 text-[#120a00]' :
+                    isToday    ? 'bg-accent-500/20 text-accent-300 font-semibold' :
                     isPast     ? 'text-gray-700' : 'text-gray-300 hover:bg-gray-800'
                   }`}
                 >
