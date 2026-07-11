@@ -107,6 +107,33 @@
 .tk-check.tk-pending { border-style: dashed; }
 .tk-not-today .tk-check { opacity: .4; }
 
+/* привычка несколько раз в день: кольцо-прогресс + пульс цифры */
+.tk-check.tk-multi { border-color: transparent; position: relative; }
+.tk-check.tk-multi::before {
+  content: ''; position: absolute; inset: -2px; border-radius: 50%;
+  background: conic-gradient(var(--ring, var(--tk-good)) calc(var(--p, 0) * 360deg), var(--tk-line) 0deg);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+          mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+  transition: background .35s ease;
+}
+.tk-check .tk-count {
+  position: relative; z-index: 1; font-size: 13px; font-weight: 800; line-height: 1;
+  color: color-mix(in srgb, var(--ring, var(--tk-text)) 90%, var(--tk-text));
+  animation: tk-count-pop .34s cubic-bezier(.34, 1.56, .64, 1);
+}
+@keyframes tk-count-pop {
+  0% { transform: scale(.55); opacity: .4; }
+  55% { transform: scale(1.28); opacity: 1; }
+  100% { transform: scale(1); }
+}
+/* момент полного закрытия дня — короткий «шлепок» галочки */
+.tk-habit-row.tk-done .tk-check svg { animation: tk-check-pop .38s cubic-bezier(.34, 1.56, .64, 1); }
+@keyframes tk-check-pop {
+  0% { transform: scale(.2); }
+  60% { transform: scale(1.25); }
+  100% { transform: scale(1); }
+}
+
 .tk-empty { text-align: center; padding: 60px 20px; color: var(--tk-muted); }
 .tk-empty .tk-em { font-size: 46px; }
 .tk-empty h3 { color: var(--tk-text); margin: 14px 0 6px; font-size: 20px; }

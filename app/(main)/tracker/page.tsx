@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, type CSSProperties } from 'react'
 import type { Habit, Schedule } from '@/lib/tracker'
 import { Dates, Stats, toCalc, plural, hexA, type HabitCalc } from '@/lib/trackerStats'
 import './tracker.css'
@@ -114,8 +114,8 @@ export default function TrackerPage() {
     if (archived) setView({ name: 'today' })
   }, [showToast])
 
+  // подтверждение — в UI (двойной тап), а не через confirm() (в установленном PWA он не всплывает)
   const deleteHabit = useCallback(async (h: Habit) => {
-    if (!confirm('Удалить привычку и всю её историю навсегда?')) return
     setHabits(prev => prev.filter(x => x.id !== h.id))
     await fetch(`/api/tracker/habits/${h.id}`, { method: 'DELETE' })
     setSheet({ open: false, editing: null })
@@ -135,7 +135,7 @@ export default function TrackerPage() {
             </div>
           )}
           {view.name === 'today' && <TodayView habits={active} calc={calc} today={today} onToggle={toggle} onOpen={id => setView({ name: 'detail', id, back: 'today' })} onAdd={() => setSheet({ open: true, editing: null })} />}
-          {view.name === 'stats' && <StatsView active={active} calc={calc} today={today} onOpen={id => setView({ name: 'detail', id, back: 'stats' })} onAdd={() => setSheet({ open: true, editing: null })} onRestore={h => archiveHabit(h, false)} />}
+          {view.name === 'stats' && <StatsView active={active} calc={calc} today={today} onOpen={id => setView({ name: 'detail', id, back: 'stats' })} onAdd={() => setSheet({ open: true, editing: null })} onRestore={h => archiveHabit(h, false)} onDelete={deleteHabit} />}
           {view.name === 'detail' && view.id && habits.find(h => h.id === view.id) && (
             <DetailView
               habit={habits.find(h => h.id === view.id)!}
@@ -231,13 +231,13 @@ function HabitRow({ h, hc, today, onToggle, onOpen, notToday }: {
         </div>
       </div>
       <button
-        className={`tk-check ${done ? '' : 'tk-pending'}`}
+        className={`tk-check ${done ? '' : (multi ? 'tk-multi' : 'tk-pending')}`}
         onClick={() => onToggle(h, today)}
         aria-label="Отметить"
-        style={multi ? { position: 'relative' } : undefined}
+        style={multi && !done ? ({ ['--p']: count / target, ['--ring']: h.color } as CSSProperties) : undefined}
       >
         {multi && !done
-          ? <span style={{ fontSize: 13, fontWeight: 800 }}>{count}/{target}</span>
+          ? <span key={count} className="tk-count">{count}/{target}</span>
           : <Check />}
       </button>
     </div>
@@ -349,10 +349,34 @@ function DetailView({ habit, hc, today, onBack, onToggle, onEdit, onArchive }: {
   )
 }
 
+// строка завершённой привычки с двойным тапом для удаления
+function ArchivedRow({ hc, today, onOpen, onRestore, onDelete }: {
+  hc: HabitCalc; today: string; onOpen: (id: string) => void; onRestore: (h: Habit) => void; onDelete: (h: Habit) => void
+}) {
+  const [confirmDel, setConfirmDel] = useState(false)
+  return (
+    <div className="tk-rank-row">
+      <div className="tk-emoji" style={{ background: 'var(--tk-card-2)', color: 'var(--tk-muted)' }}>{hc.emoji}</div>
+      <div className="tk-nm" onClick={() => onOpen(hc.id)}><b>{hc.name}</b><span>Рекорд: 🔥 {Stats.bestStreak(hc, today)} · {Stats.totalDone(hc)} отметок</span></div>
+      {confirmDel ? (
+        <button className="tk-pct" style={{ color: 'var(--tk-danger)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}
+          onClick={() => onDelete({ id: hc.id } as Habit)}>Точно?</button>
+      ) : (
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <button className="tk-pct" style={{ color: 'var(--tk-accent)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 14 }}
+            onClick={() => onRestore({ id: hc.id } as Habit)}>Вернуть</button>
+          <button aria-label="Удалить" style={{ color: 'var(--tk-faint)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, padding: '0 2px' }}
+            onClick={() => setConfirmDel(true)}>🗑</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Экран «Статистика» ─────────────────────────────────────────────────────────
-function StatsView({ active, calc, today, onOpen, onAdd, onRestore }: {
+function StatsView({ active, calc, today, onOpen, onAdd, onRestore, onDelete }: {
   active: Habit[]; calc: Record<string, HabitCalc>; today: string
-  onOpen: (id: string) => void; onAdd: () => void; onRestore: (h: Habit) => void
+  onOpen: (id: string) => void; onAdd: () => void; onRestore: (h: Habit) => void; onDelete: (h: Habit) => void
 }) {
   const activeCalc = active.map(h => calc[h.id])
   const archivedList = Object.values(calc).filter(hc => hc.archived)
@@ -410,12 +434,7 @@ function StatsView({ active, calc, today, onOpen, onAdd, onRestore }: {
           <h3>Завершённые</h3>
           <p className="tk-hint">Привычки, которые ты закончил. Память сохранена.</p>
           {archivedList.map(hc => (
-            <div key={hc.id} className="tk-rank-row">
-              <div className="tk-emoji" style={{ background: 'var(--tk-card-2)', color: 'var(--tk-muted)' }}>{hc.emoji}</div>
-              <div className="tk-nm" onClick={() => onOpen(hc.id)}><b>{hc.name}</b><span>Рекорд: 🔥 {Stats.bestStreak(hc, today)} · {Stats.totalDone(hc)} отметок</span></div>
-              <button className="tk-pct" style={{ color: 'var(--tk-accent)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 14 }}
-                onClick={() => onRestore({ id: hc.id } as Habit)}>Вернуть</button>
-            </div>
+            <ArchivedRow key={hc.id} hc={hc} today={today} onOpen={onOpen} onRestore={onRestore} onDelete={onDelete} />
           ))}
         </div>
       )}
@@ -435,6 +454,7 @@ function HabitSheet({ editing, today, onClose, onSave, onDelete }: {
   const [schedule, setSchedule] = useState<Schedule>(editing?.schedule ?? { type: 'daily' })
   const [startDate, setStartDate] = useState(editing?.startDate ?? today)
   const [targetPerDay, setTargetPerDay] = useState(editing?.targetPerDay ?? 1)
+  const [confirmDel, setConfirmDel] = useState(false)
 
   const submit = () => {
     if (!name.trim()) return
@@ -527,7 +547,9 @@ function HabitSheet({ editing, today, onClose, onSave, onDelete }: {
         <div className="tk-sheet-actions">
           <button className="tk-btn-primary" onClick={submit}>{editing ? 'Сохранить' : 'Создать привычку'}</button>
           {editing
-            ? <button className="tk-btn-ghost tk-btn-danger" onClick={() => onDelete(editing)}>🗑 Удалить навсегда</button>
+            ? <button className={`tk-btn-ghost tk-btn-danger ${confirmDel ? 'tk-armed' : ''}`} onClick={() => confirmDel ? onDelete(editing) : setConfirmDel(true)}>
+                {confirmDel ? 'Точно удалить? Нажми ещё раз' : '🗑 Удалить навсегда'}
+              </button>
             : <button className="tk-btn-ghost" onClick={onClose}>Отмена</button>}
         </div>
       </div>
