@@ -43,7 +43,7 @@ function LoginForm() {
   return (
     <div className="flex items-center justify-center min-h-screen">
       <form onSubmit={handleSubmit} className="bg-gray-900 border border-gray-800 rounded-2xl p-8 w-full max-w-sm flex flex-col gap-4">
-        <h1 className="text-xl font-semibold text-center">Todo</h1>
+        <h1 className="text-2xl font-bold text-center tracking-wide">Pen</h1>
         <input
           ref={usernameRef}
           type="text"

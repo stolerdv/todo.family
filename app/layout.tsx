@@ -12,16 +12,16 @@ export const viewport: Viewport = {
   maximumScale: 1,
   userScalable: false,
   viewportFit: 'cover',
-  themeColor: '#030712',
+  themeColor: '#000000',
 }
 
 export const metadata: Metadata = {
-  title: 'Todo Family',
-  description: 'Family task manager',
+  title: 'Pen',
+  description: 'Привычки, финансы и напоминания — организация жизни',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
-    title: 'Todo',
+    title: 'Pen',
   },
   formatDetection: {
     telephone: false,
@@ -34,8 +34,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-        <meta name="apple-mobile-web-app-title" content="Todo" />
-        <link rel="apple-touch-icon" href="/api/icon/192" />
+        <meta name="apple-mobile-web-app-title" content="Pen" />
+        <link rel="apple-touch-icon" href="/apple-icon.png" />
       </head>
       <body className={`${inter.className} bg-gray-950 text-gray-100 min-h-screen overscroll-none`}>
         <RegisterSW />

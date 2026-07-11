@@ -808,7 +808,7 @@ export default function AppPage() {
   )
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-full overflow-hidden">
       <aside className="hidden md:flex w-64 bg-gray-900/80 border-r border-gray-800/80 flex-col shrink-0">{sidebarContent}</aside>
       {sidebarOpen && (
         <div className="md:hidden fixed inset-0 z-50 flex">
