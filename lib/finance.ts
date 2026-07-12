@@ -584,11 +584,14 @@ function addMonths(dateStr: string, n: number): string {
   return dt.toISOString().slice(0, 10)
 }
 
+// столбцы всегда квалифицированы алиасом c — finance_space_members тоже содержит
+// space_id/user_id, без префикса Postgres даёт "column reference is ambiguous"
+// при джойне (getCredits); в INSERT/UPDATE без джойна алиас c добавляется явно.
 const CREDIT_FIELDS = `
-  id, space_id, user_id, kind, direction, name, counterparty, currency,
-  principal::float8 AS principal, remaining::float8 AS remaining, rate::float8 AS rate, monthly_payment::float8 AS monthly_payment,
-  to_char(start_date,'YYYY-MM-DD') AS start_date, to_char(due_date,'YYYY-MM-DD') AS due_date,
-  to_char(next_payment_date,'YYYY-MM-DD') AS next_payment_date, comment, archived, created_at`
+  c.id, c.space_id, c.user_id, c.kind, c.direction, c.name, c.counterparty, c.currency,
+  c.principal::float8 AS principal, c.remaining::float8 AS remaining, c.rate::float8 AS rate, c.monthly_payment::float8 AS monthly_payment,
+  to_char(c.start_date,'YYYY-MM-DD') AS start_date, to_char(c.due_date,'YYYY-MM-DD') AS due_date,
+  to_char(c.next_payment_date,'YYYY-MM-DD') AS next_payment_date, c.comment, c.archived, c.created_at`
 
 export async function getCredits(spaceId: string, userId: string): Promise<Credit[]> {
   const rows = await sql()`
@@ -630,7 +633,7 @@ export async function createCredit(spaceId: string, userId: string, c: CreditInp
   const principal = c.principal ?? 0
   const remaining = c.remaining ?? principal
   const rows = await sql()`
-    INSERT INTO finance_credits (space_id, user_id, kind, direction, name, counterparty, currency, principal, remaining, rate, monthly_payment, start_date, due_date, next_payment_date, comment)
+    INSERT INTO finance_credits AS c (space_id, user_id, kind, direction, name, counterparty, currency, principal, remaining, rate, monthly_payment, start_date, due_date, next_payment_date, comment)
     VALUES (${spaceId}, ${userId}, ${c.kind}, ${c.direction ?? 'owe'}, ${c.name}, ${c.counterparty ?? ''}, ${c.currency ?? '₸'},
             ${principal}, ${remaining}, ${c.rate ?? null}, ${c.monthlyPayment ?? null},
             ${c.startDate ?? null}::date, ${c.dueDate ?? null}::date, ${c.nextPaymentDate ?? null}::date, ${c.comment ?? ''})
@@ -671,7 +674,7 @@ export interface CreditPaymentInput {
 // списание для 'owe', зачисление для 'owed'. Остаток не уходит в минус, при 0 кредит закрывается.
 export async function createCreditPayment(creditId: string, userId: string, p: CreditPaymentInput): Promise<{ payment: CreditPayment; credit: Credit } | null> {
   const rows = await sql()`
-    SELECT c.direction, c.remaining::float8 AS remaining, c.next_payment_date
+    SELECT c.direction, c.remaining::float8 AS remaining, to_char(c.next_payment_date,'YYYY-MM-DD') AS next_payment_date
     FROM finance_credits c
     JOIN finance_space_members m ON m.space_id = c.space_id AND m.user_id = ${userId}
     WHERE c.id = ${creditId} LIMIT 1`
@@ -688,8 +691,8 @@ export async function createCreditPayment(creditId: string, userId: string, p: C
       VALUES (${creditId}, ${userId}, ${p.accountId ?? null}, ${amount}, COALESCE(${p.day ?? null}::date, CURRENT_DATE), ${p.comment ?? ''})
       RETURNING id, credit_id, user_id, account_id, amount::float8 AS amount, to_char(day,'YYYY-MM-DD') AS day, comment, created_at`,
     newNextDate
-      ? q`UPDATE finance_credits SET remaining = ${newRemaining}, archived = ${newRemaining <= 0}, next_payment_date = ${newNextDate}::date WHERE id = ${creditId} RETURNING ${sql().unsafe(CREDIT_FIELDS)}`
-      : q`UPDATE finance_credits SET remaining = ${newRemaining}, archived = ${newRemaining <= 0} WHERE id = ${creditId} RETURNING ${sql().unsafe(CREDIT_FIELDS)}`,
+      ? q`UPDATE finance_credits AS c SET remaining = ${newRemaining}, archived = ${newRemaining <= 0}, next_payment_date = ${newNextDate}::date WHERE id = ${creditId} RETURNING ${sql().unsafe(CREDIT_FIELDS)}`
+      : q`UPDATE finance_credits AS c SET remaining = ${newRemaining}, archived = ${newRemaining <= 0} WHERE id = ${creditId} RETURNING ${sql().unsafe(CREDIT_FIELDS)}`,
   ]
   if (p.accountId) statements.push(q`UPDATE finance_accounts SET balance = balance + ${accountDelta} WHERE id = ${p.accountId}`)
   const res = await q.transaction(statements)

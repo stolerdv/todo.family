@@ -5,6 +5,10 @@ import { usePathname } from 'next/navigation'
 
 const TABS = [
   {
+    href: '/today', label: 'Сегодня',
+    icon: (<><circle cx="12" cy="12" r="4.5" /><path d="M12 2.5v2.5M12 19v2.5M21.5 12H19M5 12H2.5M18.5 5.5l-1.8 1.8M7.3 16.7l-1.8 1.8M18.5 18.5l-1.8-1.8M7.3 7.3 5.5 5.5" /></>),
+  },
+  {
     href: '/tracker', label: 'Трекер',
     icon: (<><path d="M9 11l3 3 8-8" /><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9" /></>),
   },
