@@ -205,6 +205,26 @@ export default function TodayPage() {
     () => credits.filter(c => !c.archived && c.monthlyPayment != null && c.nextPaymentDate && c.nextPaymentDate <= today),
     [credits, today],
   )
+  // долги/рассрочки без ежемесячного платежа, но со сроком погашения на носу — тоже стоит напомнить
+  const dueDebts = useMemo(() => {
+    const soon = Dates.addDays(today, 7)
+    return credits
+      .filter(c => !c.archived && c.monthlyPayment == null && c.dueDate && c.dueDate <= soon)
+      .sort((a, b) => a.dueDate!.localeCompare(b.dueDate!))
+  }, [credits, today])
+  // все обязательные платежи в этом месяце (включая просроченные с прошлых), ещё не внесённые —
+  // чтобы «Свободно на месяц» показывало не только текущий остаток, но и прогноз к концу месяца
+  const monthDueSum = useMemo(() => {
+    const monthKey = today.slice(0, 7)
+    let sum = 0
+    for (const c of credits) {
+      if (c.archived || c.monthlyPayment == null || !c.nextPaymentDate || c.nextPaymentDate.slice(0, 7) > monthKey) continue
+      const conv = convert(c.monthlyPayment, c.currency, effSettings)
+      if (conv != null) sum += conv
+    }
+    return sum
+  }, [credits, effSettings, today])
+  const projectedEnd = freeBudget != null ? freeBudget - spentThisMonth - monthDueSum : null
 
   const greeting = useMemo(() => {
     const h = new Date().getHours()
@@ -216,7 +236,7 @@ export default function TodayPage() {
   }, [today])
 
   const nothingPlanned = dueHabits.length === 0 && overdue.length === 0 && agenda.length === 0
-    && upcomingTasks.length === 0 && upcomingEvents.length === 0 && duePayments.length === 0
+    && upcomingTasks.length === 0 && upcomingEvents.length === 0 && duePayments.length === 0 && dueDebts.length === 0
 
   const addTask = useCallback(async (title: string) => {
     let sid = sections.find(s => !s.archived)?.id
@@ -299,11 +319,16 @@ export default function TodayPage() {
                 }} />
               </div>
               <p className="text-xs text-gray-600 mt-1.5">потрачено {fmt(spentThisMonth, effSettings.baseCurrency)} из {fmt(freeBudget, effSettings.baseCurrency)}</p>
+              {monthDueSum > 0 && projectedEnd != null && (
+                <p className={`text-xs mt-1 ${projectedEnd < 0 ? 'text-red-400' : 'text-gray-500'}`}>
+                  К концу месяца ≈ {fmt(projectedEnd, effSettings.baseCurrency)} (с учётом платежей по кредитам)
+                </p>
+              )}
             </>
           )}
           {overBudget.length > 0 && (
             <p className="text-xs text-red-400 mt-1.5">
-              Превышен бюджет: {overBudget.map(x => x.c.name).join(', ')}
+              Превышен бюджет: {overBudget.map(x => `${x.c.name} +${fmt(x.spent - x.b.amount, effSettings.baseCurrency)}`).join(', ')}
             </p>
           )}
         </div>
@@ -333,8 +358,8 @@ export default function TodayPage() {
         </Section>
       )}
 
-      {duePayments.length > 0 && (
-        <Section title="Платежи" count={duePayments.length} accent="red">
+      {(duePayments.length > 0 || dueDebts.length > 0) && (
+        <Section title="Платежи" count={duePayments.length + dueDebts.length} accent="red">
           <div className="space-y-1.5">
             {duePayments.map(c => (
               <div key={c.id} className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-3">
@@ -342,6 +367,21 @@ export default function TodayPage() {
                   <p className="text-sm text-gray-200 truncate">{c.name}</p>
                   <p className={`text-xs mt-0.5 ${c.nextPaymentDate! < today ? 'text-red-400' : 'text-gray-500'}`}>
                     {fmt(c.monthlyPayment!, c.currency)}{c.nextPaymentDate! < today ? ' · просрочен' : ' · сегодня'}
+                  </p>
+                </div>
+                <button onClick={() => payCreditQuick(c)}
+                  className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-bold text-[#120a00]"
+                  style={{ background: 'linear-gradient(135deg, #ffa04d, #ff7a1a)' }}>
+                  Оплатить
+                </button>
+              </div>
+            ))}
+            {dueDebts.map(c => (
+              <div key={c.id} className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-gray-200 truncate">{c.name}</p>
+                  <p className={`text-xs mt-0.5 ${c.dueDate! < today ? 'text-red-400' : 'text-gray-500'}`}>
+                    {fmt(c.remaining, c.currency)}{c.dueDate! < today ? ' · просрочено' : c.dueDate === today ? ' · срок сегодня' : ` · срок ${Dates.humanShort(c.dueDate!)}`}
                   </p>
                 </div>
                 <button onClick={() => payCreditQuick(c)}
