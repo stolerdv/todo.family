@@ -288,6 +288,7 @@ export type TxnType = 'expense' | 'income' | 'transfer'
 export interface Txn {
   id: string
   userId: string
+  authorName: string
   accountId: string
   type: TxnType
   amount: number
@@ -301,7 +302,7 @@ export interface Txn {
 
 function mapTxn(r: any): Txn {
   return {
-    id: r.id, userId: r.user_id, accountId: r.account_id, type: r.type as TxnType,
+    id: r.id, userId: r.user_id, authorName: r.author_name ?? '', accountId: r.account_id, type: r.type as TxnType,
     amount: Number(r.amount), category: r.category ?? '', comment: r.comment ?? '',
     day: r.day, toAccountId: r.to_account_id ?? null, toAmount: r.to_amount == null ? null : Number(r.to_amount),
     createdAt: r.created_at,
@@ -310,10 +311,11 @@ function mapTxn(r: any): Txn {
 
 export async function getTxns(spaceId: string, userId: string, limit = 300): Promise<Txn[]> {
   const rows = await sql()`
-    SELECT t.id, t.user_id, t.account_id, t.type, t.amount::float8 AS amount, t.category, t.comment,
+    SELECT t.id, t.user_id, u.username AS author_name, t.account_id, t.type, t.amount::float8 AS amount, t.category, t.comment,
            to_char(t.day, 'YYYY-MM-DD') AS day, t.to_account_id, t.to_amount::float8 AS to_amount, t.created_at
     FROM finance_txns t
     JOIN finance_space_members m ON m.space_id = t.space_id AND m.user_id = ${userId}
+    LEFT JOIN todo_users u ON u.id = t.user_id
     WHERE t.space_id = ${spaceId}
     ORDER BY t.day DESC, t.created_at DESC LIMIT ${limit}`
   return (rows as any[]).map(mapTxn)
@@ -342,7 +344,46 @@ export async function createTxn(userId: string, t: TxnInput): Promise<{ txn: Txn
                 to_char(day, 'YYYY-MM-DD') AS day, to_account_id, to_amount::float8 AS to_amount, created_at`,
     q`UPDATE finance_accounts SET balance = balance + ${delta} WHERE id = ${t.accountId}`,
   ])
-  return { txn: mapTxn((res[0] as any[])[0]), delta }
+  const row = (res[0] as any[])[0]
+  const author = await sql()`SELECT username FROM todo_users WHERE id = ${userId} LIMIT 1`
+  row.author_name = (author[0] as any)?.username ?? ''
+  return { txn: mapTxn(row), delta }
+}
+
+// редактирует расход/доход (не перевод — тот трогает 2 счёта, правится через удаление+создание).
+// Атомарно доносит разницу суммы до баланса счёта, если amount изменился.
+export interface TxnEditInput { amount?: number; category?: string; comment?: string; day?: string }
+
+export async function editTxn(id: string, userId: string, patch: TxnEditInput): Promise<{ txn: Txn; balanceDelta: number } | null> {
+  const rows = await sql()`
+    SELECT t.account_id, t.type, t.amount::float8 AS amount
+    FROM finance_txns t
+    JOIN finance_space_members m ON m.space_id = t.space_id AND m.user_id = ${userId}
+    WHERE t.id = ${id} AND t.type IN ('expense','income') LIMIT 1`
+  const cur = rows[0] as any
+  if (!cur) return null
+
+  const newAmount = patch.amount !== undefined ? Math.abs(Number(patch.amount)) : Number(cur.amount)
+  const sign = cur.type === 'expense' ? -1 : 1
+  const balanceDelta = (newAmount - Number(cur.amount)) * sign
+
+  const q = sql()
+  const statements = [
+    q`UPDATE finance_txns SET
+        amount   = ${newAmount},
+        category = COALESCE(${patch.category ?? null}, category),
+        comment  = COALESCE(${patch.comment ?? null}, comment),
+        day      = COALESCE(${patch.day ?? null}::date, day)
+      WHERE id = ${id}
+      RETURNING id, user_id, account_id, type, amount::float8 AS amount, category, comment,
+                to_char(day, 'YYYY-MM-DD') AS day, to_account_id, to_amount::float8 AS to_amount, created_at`,
+  ]
+  if (balanceDelta !== 0) statements.push(q`UPDATE finance_accounts SET balance = balance + ${balanceDelta} WHERE id = ${cur.account_id}`)
+  const res = await q.transaction(statements)
+  const row = (res[0] as any[])[0]
+  const author = await sql()`SELECT username FROM todo_users WHERE id = ${row.user_id} LIMIT 1`
+  row.author_name = (author[0] as any)?.username ?? ''
+  return { txn: mapTxn(row), balanceDelta }
 }
 
 export interface TransferInput {

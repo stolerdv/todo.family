@@ -36,6 +36,7 @@ export default function FinancePage() {
   const [view, setView] = useState<View>({ name: 'list' })
   const [modal, setModal] = useState<Modal>(null)
   const [editingAcc, setEditingAcc] = useState<Account | null>(null)
+  const [editingOp, setEditingOp] = useState<Txn | null>(null)
   const [toast, setToast] = useState<string | null>(null)
 
   const today = useMemo(() => Dates.todayKey(), [])
@@ -246,6 +247,16 @@ export default function FinancePage() {
     if (r && Array.isArray(r.reverts)) r.reverts.forEach((rv: any) => bump(rv.accountId, rv.delta))
   }, [])
 
+  // редактирование расхода/дохода (не перевод) — сумма/категория/комментарий/дата
+  const editOp = useCallback(async (t: Txn, patch: { amount: number; category: string; comment: string; day: string }) => {
+    const res = await fetch(`/api/finance/txns/${t.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })
+    if (!res.ok) { showToast('Не удалось сохранить'); return }
+    const { txn, balanceDelta } = await res.json()
+    setTxns(prev => prev.map(x => x.id === t.id ? txn : x))
+    if (balanceDelta) bump(t.accountId, balanceDelta)
+    showToast('Операция изменена')
+  }, [showToast])
+
   // ── настройки ───────────────────────────────────────────────────────────────
   const saveSettings = useCallback(async (baseCurrency: string, rates: Record<string, number>) => {
     setSettings({ baseCurrency, rates })
@@ -291,7 +302,7 @@ export default function FinancePage() {
               onOpenAccount={id => setView({ name: 'detail', id })}
               onAddAccount={() => openAccountSheet(null)}
               onSettings={() => setModal('menu')}
-              onDeleteOp={deleteOp}
+              onDeleteOp={deleteOp} onEditOp={setEditingOp}
             />
           )}
           {view.name === 'detail' && detailAcc && (
@@ -300,7 +311,7 @@ export default function FinancePage() {
               accountName={id => accounts.find(a => a.id === id)?.name ?? ''}
               onBack={() => setView({ name: 'list' })}
               onEdit={openAccountSheet} onArchive={archiveAccount} onSetBalance={setBalance}
-              onAddRate={addRate} onDeleteRate={deleteRate} onDeleteOp={deleteOp}
+              onAddRate={addRate} onDeleteRate={deleteRate} onDeleteOp={deleteOp} onEditOp={setEditingOp}
               onTopUp={topUpDeposit} onAccrue={accrueInterest}
             />
           )}
@@ -315,6 +326,7 @@ export default function FinancePage() {
       {modal === 'op' && <OperationSheet accounts={spendable} categories={categories} onClose={() => setModal(null)} onSave={addOp} onTransfer={addTransfer} onAddAccount={() => openAccountSheet(null)} />}
       {modal === 'menu' && <SettingsMenu onClose={() => setModal(null)} onReports={() => setModal('reports')} onRates={() => setModal('rates')} onCats={() => setModal('cats')} onBudgets={() => setModal('budgets')} onSpaces={() => setModal('space')} />}
       {modal === 'reports' && <ReportsSheet accounts={active} txns={txns} categories={categories} settings={settings} today={today} onClose={() => setModal('menu')} />}
+      {editingOp && <EditOpSheet t={editingOp} categories={categories} onClose={() => setEditingOp(null)} onSave={patch => { editOp(editingOp, patch); setEditingOp(null) }} />}
       {modal === 'space' && (
         <SpaceSheet
           spaces={spaces} spaceId={spaceId} myId={myId}
@@ -374,10 +386,10 @@ function FinanceSkeleton() {
 }
 
 // ── Список ───────────────────────────────────────────────────────────────────
-function ListView({ active, txns, settings, categories, budgets, accounts, today, catInfo, onOpenAccount, onAddAccount, onSettings, onDeleteOp }: {
+function ListView({ active, txns, settings, categories, budgets, accounts, today, catInfo, onOpenAccount, onAddAccount, onSettings, onDeleteOp, onEditOp }: {
   active: Account[]; txns: Txn[]; settings: FinanceSettings; categories: Category[]; budgets: Budget[]; accounts: Account[]
   today: string; catInfo: (k: string) => { emoji: string; label: string }
-  onOpenAccount: (id: string) => void; onAddAccount: () => void; onSettings: () => void; onDeleteOp: (t: Txn) => void
+  onOpenAccount: (id: string) => void; onAddAccount: () => void; onSettings: () => void; onDeleteOp: (t: Txn) => void; onEditOp: (t: Txn) => void
 }) {
   const gear = (
     <button onClick={onSettings} aria-label="Настройки" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--tk-muted)', fontSize: 22, padding: 4 }}>⚙</button>
@@ -473,7 +485,7 @@ function ListView({ active, txns, settings, categories, budgets, accounts, today
         <>
           <div className="tk-section-label">Последние операции</div>
           <div className="tk-block" style={{ padding: '6px 16px' }}>
-            {txns.slice(0, 30).map(t => <OpRow key={t.id} t={t} info={catInfo(t.category)} fromName={nameOf(t.accountId)} toName={t.toAccountId ? nameOf(t.toAccountId) : ''} currency={curOf(t.accountId)} onDelete={onDeleteOp} />)}
+            {txns.slice(0, 30).map(t => <OpRow key={t.id} t={t} info={catInfo(t.category)} fromName={nameOf(t.accountId)} toName={t.toAccountId ? nameOf(t.toAccountId) : ''} currency={curOf(t.accountId)} onDelete={onDeleteOp} onEdit={onEditOp} />)}
           </div>
         </>
       )}
@@ -499,7 +511,10 @@ function AccountRow({ a, today, onOpen }: { a: Account; today: string; onOpen: (
   )
 }
 
-function OpRow({ t, info, fromName, toName, currency, onDelete }: { t: Txn; info: { emoji: string; label: string }; fromName: string; toName: string; currency: string; onDelete: (t: Txn) => void }) {
+function OpRow({ t, info, fromName, toName, currency, onDelete, onEdit }: {
+  t: Txn; info: { emoji: string; label: string }; fromName: string; toName: string; currency: string
+  onDelete: (t: Txn) => void; onEdit?: (t: Txn) => void
+}) {
   const isTransfer = t.type === 'transfer'
   const income = t.type === 'income'
   const emoji = isTransfer ? '🔄' : info.emoji
@@ -507,12 +522,18 @@ function OpRow({ t, info, fromName, toName, currency, onDelete }: { t: Txn; info
   const sub = isTransfer ? `${fromName} → ${toName}` : fromName
   const color = isTransfer ? 'var(--tk-muted)' : (income ? 'var(--tk-good)' : 'var(--tk-text)')
   const sign = isTransfer ? '' : (income ? '+' : '−')
+  const canEdit = !isTransfer && !!onEdit
   return (
     <div className="fin-kv" style={{ gap: 12 }}>
       <div style={{ width: 34, height: 34, borderRadius: 9, background: 'var(--tk-card-2)', display: 'grid', placeItems: 'center', fontSize: 17, flex: '0 0 auto' }}>{emoji}</div>
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div
+        style={{ flex: 1, minWidth: 0, cursor: canEdit ? 'pointer' : 'default' }}
+        onClick={() => canEdit && onEdit!(t)}
+      >
         <div style={{ fontWeight: 600, fontSize: 14.5 }}>{label}</div>
-        <div style={{ color: 'var(--tk-muted)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub}{t.comment ? ` · ${t.comment}` : ''} · {Dates.humanShort(t.day)}</div>
+        <div style={{ color: 'var(--tk-muted)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {sub}{t.comment ? ` · ${t.comment}` : ''} · {Dates.humanShort(t.day)}{t.authorName ? ` · ${t.authorName}` : ''}
+        </div>
       </div>
       <div style={{ fontWeight: 800, fontSize: 15, color, whiteSpace: 'nowrap' }}>{sign}{formatMoney(t.amount, currency)}</div>
       <button onClick={() => onDelete(t)} aria-label="Удалить" style={{ background: 'none', border: 'none', color: 'var(--tk-faint)', cursor: 'pointer', fontSize: 15, padding: 4 }}>✕</button>
@@ -520,11 +541,62 @@ function OpRow({ t, info, fromName, toName, currency, onDelete }: { t: Txn; info
   )
 }
 
+// ── Шторка редактирования операции (расход/доход) ─────────────────────────────────
+function EditOpSheet({ t, categories, onClose, onSave }: {
+  t: Txn; categories: Category[]; onClose: () => void; onSave: (patch: { amount: number; category: string; comment: string; day: string }) => void
+}) {
+  const [amount, setAmount] = useState(String(t.amount))
+  const [category, setCategory] = useState(t.category)
+  const [comment, setComment] = useState(t.comment)
+  const [day, setDay] = useState(t.day)
+  const [submitting, setSubmitting] = useState(false)
+  const cats = categories.filter(c => c.kind === (t.type === 'income' ? 'income' : 'expense'))
+  const canSave = parseMoney(amount) > 0
+
+  const submit = () => {
+    if (submitting || !canSave) return
+    setSubmitting(true)
+    onSave({ amount: parseMoney(amount), category, comment: comment.trim(), day })
+  }
+
+  return (
+    <div className="tk-sheet">
+      <div className="tk-sheet-backdrop" onClick={onClose} />
+      <div className="tk-sheet-card">
+        <div className="tk-sheet-grab" />
+        <h2>Изменить {t.type === 'income' ? 'доход' : 'расход'}</h2>
+        <div className="tk-field">
+          <label>Сумма</label>
+          <input className="tk-input" inputMode="decimal" autoFocus value={amount} onChange={e => setAmount(e.target.value)} style={{ fontSize: 22, fontWeight: 800, textAlign: 'center' }} />
+        </div>
+        <div className="tk-field">
+          <label>Категория</label>
+          <div className="tk-emoji-picker">
+            {cats.map(c => (
+              <button key={c.id} type="button" className={`tk-emoji-opt ${category === c.id ? 'tk-sel' : ''}`} style={{ width: 'auto', padding: '0 12px', gap: 6, display: 'flex', alignItems: 'center', fontSize: 14, fontWeight: 600 }} onClick={() => setCategory(c.id)}>
+                <span style={{ fontSize: 17 }}>{c.emoji}</span>{c.name}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="tk-field"><label>Дата</label><input className="tk-input" type="date" value={day} onChange={e => setDay(e.target.value)} /></div>
+        <div className="tk-field"><label>Комментарий</label><input className="tk-input" maxLength={100} value={comment} onChange={e => setComment(e.target.value)} /></div>
+        <div className="tk-sheet-actions">
+          <button className="tk-btn-primary" disabled={!canSave || submitting} style={{ opacity: canSave && !submitting ? 1 : .5 }} onClick={submit}>
+            {submitting ? 'Сохраняем…' : 'Сохранить'}
+          </button>
+          <button className="tk-btn-ghost" onClick={onClose}>Отмена</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Детали счёта ──────────────────────────────────────────────────────────────
-function DetailView({ acc, txns, today, catInfo, accountName, onBack, onEdit, onArchive, onSetBalance, onAddRate, onDeleteRate, onDeleteOp, onTopUp, onAccrue }: {
+function DetailView({ acc, txns, today, catInfo, accountName, onBack, onEdit, onArchive, onSetBalance, onAddRate, onDeleteRate, onDeleteOp, onEditOp, onTopUp, onAccrue }: {
   acc: Account; txns: Txn[]; today: string; catInfo: (k: string) => { emoji: string; label: string }; accountName: (id: string) => string
   onBack: () => void; onEdit: (a: Account) => void; onArchive: (a: Account) => void; onSetBalance: (a: Account, b: number) => void
-  onAddRate: (a: Account, fromDate: string, rate: number) => void; onDeleteRate: (a: Account, rateId: string) => void; onDeleteOp: (t: Txn) => void
+  onAddRate: (a: Account, fromDate: string, rate: number) => void; onDeleteRate: (a: Account, rateId: string) => void; onDeleteOp: (t: Txn) => void; onEditOp: (t: Txn) => void
   onTopUp: (a: Account, amount: number) => void; onAccrue: (a: Account) => void
 }) {
   const isDeposit = acc.type === 'deposit'
@@ -611,7 +683,7 @@ function DetailView({ acc, txns, today, catInfo, accountName, onBack, onEdit, on
       <div className="tk-block" style={{ padding: '6px 16px' }}>
         <div style={{ padding: '10px 0 4px', color: 'var(--tk-faint)', fontSize: 12, fontWeight: 700, textTransform: 'uppercase' }}>История операций{txns.length ? ` · ${txns.length}` : ''}</div>
         {txns.length > 0
-          ? txns.map(t => <OpRow key={t.id} t={t} info={catInfo(t.category)} fromName={accountName(t.accountId)} toName={t.toAccountId ? accountName(t.toAccountId) : ''} currency={acc.currency} onDelete={onDeleteOp} />)
+          ? txns.map(t => <OpRow key={t.id} t={t} info={catInfo(t.category)} fromName={accountName(t.accountId)} toName={t.toAccountId ? accountName(t.toAccountId) : ''} currency={acc.currency} onDelete={onDeleteOp} onEdit={onEditOp} />)
           : <p className="tk-hint" style={{ padding: '4px 0 10px' }}>Пока нет операций по этому счёту. {isDeposit ? 'Пополнения и переводы появятся здесь.' : 'Добавь операцию через «+».'}</p>}
       </div>
 
