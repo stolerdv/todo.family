@@ -518,3 +518,207 @@ export async function setBudget(userId: string, categoryId: string, amount: numb
     INSERT INTO finance_budgets (user_id, space_id, category_id, amount) VALUES (${userId}, ${(c[0] as any).space_id}, ${categoryId}, ${amount})
     ON CONFLICT (category_id) DO UPDATE SET amount = EXCLUDED.amount`
 }
+
+// ── Кредиты / долги / рассрочки ────────────────────────────────────────────────
+// direction осмыслен для kind='debt': 'owe' — я должен (платёж списывается со счёта),
+// 'owed' — мне должны (платёж зачисляется на счёт). Кредит/рассрочка всегда 'owe'.
+
+export type CreditKind = 'credit' | 'debt' | 'installment'
+export type CreditDirection = 'owe' | 'owed'
+
+export interface CreditPayment {
+  id: string
+  creditId: string
+  userId: string
+  authorName: string
+  accountId: string | null
+  amount: number
+  day: string
+  comment: string
+  createdAt: string
+}
+
+export interface Credit {
+  id: string
+  spaceId: string
+  userId: string
+  kind: CreditKind
+  direction: CreditDirection
+  name: string
+  counterparty: string
+  currency: string
+  principal: number
+  remaining: number
+  rate: number | null
+  monthlyPayment: number | null
+  startDate: string | null
+  dueDate: string | null
+  nextPaymentDate: string | null
+  comment: string
+  archived: boolean
+  createdAt: string
+  payments: CreditPayment[]
+}
+
+function mapPayment(r: any): CreditPayment {
+  return {
+    id: r.id, creditId: r.credit_id, userId: r.user_id, authorName: r.author_name ?? '',
+    accountId: r.account_id ?? null, amount: Number(r.amount), day: r.day, comment: r.comment ?? '', createdAt: r.created_at,
+  }
+}
+
+function mapCredit(r: any, payments: CreditPayment[] = []): Credit {
+  return {
+    id: r.id, spaceId: r.space_id, userId: r.user_id, kind: r.kind as CreditKind, direction: r.direction as CreditDirection,
+    name: r.name, counterparty: r.counterparty ?? '', currency: r.currency,
+    principal: Number(r.principal), remaining: Number(r.remaining),
+    rate: r.rate == null ? null : Number(r.rate), monthlyPayment: r.monthly_payment == null ? null : Number(r.monthly_payment),
+    startDate: r.start_date ?? null, dueDate: r.due_date ?? null, nextPaymentDate: r.next_payment_date ?? null,
+    comment: r.comment ?? '', archived: r.archived, createdAt: r.created_at, payments,
+  }
+}
+
+function addMonths(dateStr: string, n: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1 + n, d))
+  return dt.toISOString().slice(0, 10)
+}
+
+const CREDIT_FIELDS = `
+  id, space_id, user_id, kind, direction, name, counterparty, currency,
+  principal::float8 AS principal, remaining::float8 AS remaining, rate::float8 AS rate, monthly_payment::float8 AS monthly_payment,
+  to_char(start_date,'YYYY-MM-DD') AS start_date, to_char(due_date,'YYYY-MM-DD') AS due_date,
+  to_char(next_payment_date,'YYYY-MM-DD') AS next_payment_date, comment, archived, created_at`
+
+export async function getCredits(spaceId: string, userId: string): Promise<Credit[]> {
+  const rows = await sql()`
+    SELECT ${sql().unsafe(CREDIT_FIELDS)} FROM finance_credits c
+    JOIN finance_space_members m ON m.space_id = c.space_id AND m.user_id = ${userId}
+    WHERE c.space_id = ${spaceId}
+    ORDER BY c.archived, c.created_at DESC`
+  if (rows.length === 0) return []
+  const ids = (rows as any[]).map(r => r.id)
+  const payRows = await sql()`
+    SELECT p.id, p.credit_id, p.user_id, u.username AS author_name, p.account_id, p.amount::float8 AS amount,
+      to_char(p.day,'YYYY-MM-DD') AS day, p.comment, p.created_at
+    FROM finance_credit_payments p
+    LEFT JOIN todo_users u ON u.id = p.user_id
+    WHERE p.credit_id = ANY(${ids}) ORDER BY p.day DESC, p.created_at DESC`
+  const byCredit: Record<string, CreditPayment[]> = {}
+  for (const r of payRows as any[]) (byCredit[r.credit_id] ??= []).push(mapPayment(r))
+  return (rows as any[]).map(r => mapCredit(r, byCredit[r.id] ?? []))
+}
+
+export interface CreditInput {
+  kind: CreditKind
+  direction?: CreditDirection
+  name: string
+  counterparty?: string
+  currency?: string
+  principal?: number
+  remaining?: number
+  rate?: number | null
+  monthlyPayment?: number | null
+  startDate?: string | null
+  dueDate?: string | null
+  nextPaymentDate?: string | null
+  comment?: string
+}
+
+export async function createCredit(spaceId: string, userId: string, c: CreditInput): Promise<Credit> {
+  if (!(await isMember(spaceId, userId))) throw new Error('not found')
+  const principal = c.principal ?? 0
+  const remaining = c.remaining ?? principal
+  const rows = await sql()`
+    INSERT INTO finance_credits (space_id, user_id, kind, direction, name, counterparty, currency, principal, remaining, rate, monthly_payment, start_date, due_date, next_payment_date, comment)
+    VALUES (${spaceId}, ${userId}, ${c.kind}, ${c.direction ?? 'owe'}, ${c.name}, ${c.counterparty ?? ''}, ${c.currency ?? '₸'},
+            ${principal}, ${remaining}, ${c.rate ?? null}, ${c.monthlyPayment ?? null},
+            ${c.startDate ?? null}::date, ${c.dueDate ?? null}::date, ${c.nextPaymentDate ?? null}::date, ${c.comment ?? ''})
+    RETURNING ${sql().unsafe(CREDIT_FIELDS)}`
+  return mapCredit(rows[0], [])
+}
+
+export async function updateCredit(id: string, userId: string, f: Partial<CreditInput & { archived: boolean }>): Promise<void> {
+  if (f.kind            !== undefined) await sql()`UPDATE finance_credits c SET kind             = ${f.kind}            FROM finance_space_members m WHERE c.id = ${id} AND m.space_id = c.space_id AND m.user_id = ${userId}`
+  if (f.direction        !== undefined) await sql()`UPDATE finance_credits c SET direction        = ${f.direction}        FROM finance_space_members m WHERE c.id = ${id} AND m.space_id = c.space_id AND m.user_id = ${userId}`
+  if (f.name             !== undefined) await sql()`UPDATE finance_credits c SET name             = ${f.name}             FROM finance_space_members m WHERE c.id = ${id} AND m.space_id = c.space_id AND m.user_id = ${userId}`
+  if (f.counterparty      !== undefined) await sql()`UPDATE finance_credits c SET counterparty     = ${f.counterparty}      FROM finance_space_members m WHERE c.id = ${id} AND m.space_id = c.space_id AND m.user_id = ${userId}`
+  if (f.currency          !== undefined) await sql()`UPDATE finance_credits c SET currency         = ${f.currency}          FROM finance_space_members m WHERE c.id = ${id} AND m.space_id = c.space_id AND m.user_id = ${userId}`
+  if (f.principal         !== undefined) await sql()`UPDATE finance_credits c SET principal        = ${f.principal}         FROM finance_space_members m WHERE c.id = ${id} AND m.space_id = c.space_id AND m.user_id = ${userId}`
+  if (f.remaining         !== undefined) await sql()`UPDATE finance_credits c SET remaining        = ${f.remaining}         FROM finance_space_members m WHERE c.id = ${id} AND m.space_id = c.space_id AND m.user_id = ${userId}`
+  if (f.rate              !== undefined) await sql()`UPDATE finance_credits c SET rate             = ${f.rate}              FROM finance_space_members m WHERE c.id = ${id} AND m.space_id = c.space_id AND m.user_id = ${userId}`
+  if (f.monthlyPayment    !== undefined) await sql()`UPDATE finance_credits c SET monthly_payment  = ${f.monthlyPayment}    FROM finance_space_members m WHERE c.id = ${id} AND m.space_id = c.space_id AND m.user_id = ${userId}`
+  if (f.startDate         !== undefined) await sql()`UPDATE finance_credits c SET start_date       = ${f.startDate}::date   FROM finance_space_members m WHERE c.id = ${id} AND m.space_id = c.space_id AND m.user_id = ${userId}`
+  if (f.dueDate            !== undefined) await sql()`UPDATE finance_credits c SET due_date         = ${f.dueDate}::date     FROM finance_space_members m WHERE c.id = ${id} AND m.space_id = c.space_id AND m.user_id = ${userId}`
+  if (f.nextPaymentDate    !== undefined) await sql()`UPDATE finance_credits c SET next_payment_date = ${f.nextPaymentDate}::date FROM finance_space_members m WHERE c.id = ${id} AND m.space_id = c.space_id AND m.user_id = ${userId}`
+  if (f.comment           !== undefined) await sql()`UPDATE finance_credits c SET comment          = ${f.comment}          FROM finance_space_members m WHERE c.id = ${id} AND m.space_id = c.space_id AND m.user_id = ${userId}`
+  if (f.archived          !== undefined) await sql()`UPDATE finance_credits c SET archived         = ${f.archived}         FROM finance_space_members m WHERE c.id = ${id} AND m.space_id = c.space_id AND m.user_id = ${userId}`
+}
+
+export async function deleteCredit(id: string, userId: string): Promise<void> {
+  await sql()`DELETE FROM finance_credits c USING finance_space_members m WHERE c.id = ${id} AND m.space_id = c.space_id AND m.user_id = ${userId}`
+}
+
+export interface CreditPaymentInput {
+  accountId?: string | null
+  amount: number
+  day?: string
+  comment?: string
+  advanceNextPayment?: boolean // сдвинуть next_payment_date на месяц вперёд (оплата регулярного платежа)
+}
+
+// платёж по кредиту/долгу: уменьшает остаток и (если указан счёт) атомарно меняет его баланс —
+// списание для 'owe', зачисление для 'owed'. Остаток не уходит в минус, при 0 кредит закрывается.
+export async function createCreditPayment(creditId: string, userId: string, p: CreditPaymentInput): Promise<{ payment: CreditPayment; credit: Credit } | null> {
+  const rows = await sql()`
+    SELECT c.direction, c.remaining::float8 AS remaining, c.next_payment_date
+    FROM finance_credits c
+    JOIN finance_space_members m ON m.space_id = c.space_id AND m.user_id = ${userId}
+    WHERE c.id = ${creditId} LIMIT 1`
+  const cur = rows[0] as any
+  if (!cur) return null
+  const amount = Math.abs(Number(p.amount))
+  const accountDelta = cur.direction === 'owe' ? -amount : amount
+  const newRemaining = Math.max(0, Math.round((Number(cur.remaining) - amount) * 100) / 100)
+  const newNextDate = (p.advanceNextPayment && cur.next_payment_date) ? addMonths(cur.next_payment_date, 1) : null
+
+  const q = sql()
+  const statements = [
+    q`INSERT INTO finance_credit_payments (credit_id, user_id, account_id, amount, day, comment)
+      VALUES (${creditId}, ${userId}, ${p.accountId ?? null}, ${amount}, COALESCE(${p.day ?? null}::date, CURRENT_DATE), ${p.comment ?? ''})
+      RETURNING id, credit_id, user_id, account_id, amount::float8 AS amount, to_char(day,'YYYY-MM-DD') AS day, comment, created_at`,
+    newNextDate
+      ? q`UPDATE finance_credits SET remaining = ${newRemaining}, archived = ${newRemaining <= 0}, next_payment_date = ${newNextDate}::date WHERE id = ${creditId} RETURNING ${sql().unsafe(CREDIT_FIELDS)}`
+      : q`UPDATE finance_credits SET remaining = ${newRemaining}, archived = ${newRemaining <= 0} WHERE id = ${creditId} RETURNING ${sql().unsafe(CREDIT_FIELDS)}`,
+  ]
+  if (p.accountId) statements.push(q`UPDATE finance_accounts SET balance = balance + ${accountDelta} WHERE id = ${p.accountId}`)
+  const res = await q.transaction(statements)
+  const payRow = (res[0] as any[])[0]
+  const author = await sql()`SELECT username FROM todo_users WHERE id = ${userId} LIMIT 1`
+  payRow.author_name = (author[0] as any)?.username ?? ''
+  const creditRow = (res[1] as any[])[0]
+  return { payment: mapPayment(payRow), credit: mapCredit(creditRow, []) }
+}
+
+// удаляет платёж и возвращает остаток кредита / баланс счёта назад
+export async function deleteCreditPayment(paymentId: string, userId: string): Promise<{ creditId: string; accountId: string | null; accountDelta: number } | null> {
+  const rows = await sql()`
+    SELECT p.credit_id, p.account_id, p.amount::float8 AS amount, c.direction, c.remaining::float8 AS remaining
+    FROM finance_credit_payments p
+    JOIN finance_credits c ON c.id = p.credit_id
+    JOIN finance_space_members m ON m.space_id = c.space_id AND m.user_id = ${userId}
+    WHERE p.id = ${paymentId} LIMIT 1`
+  const cur = rows[0] as any
+  if (!cur) return null
+  const amount = Math.abs(Number(cur.amount))
+  const newRemaining = Math.round((Number(cur.remaining) + amount) * 100) / 100
+  const accountDelta = cur.direction === 'owe' ? amount : -amount // revert
+  const q = sql()
+  const statements = [
+    q`DELETE FROM finance_credit_payments WHERE id = ${paymentId}`,
+    q`UPDATE finance_credits SET remaining = ${newRemaining}, archived = false WHERE id = ${cur.credit_id}`,
+  ]
+  if (cur.account_id) statements.push(q`UPDATE finance_accounts SET balance = balance + ${accountDelta} WHERE id = ${cur.account_id}`)
+  await q.transaction(statements)
+  return { creditId: cur.credit_id, accountId: cur.account_id ?? null, accountDelta: cur.account_id ? accountDelta : 0 }
+}

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useMemo, useCallback, type CSSProperties } from 'react'
-import type { Account, DepositRate, Txn, TxnType, FinanceSettings, Category, Budget, Space } from '@/lib/finance'
+import type { Account, DepositRate, Txn, TxnType, FinanceSettings, Category, Budget, Space, Credit, CreditKind, CreditDirection, CreditPayment } from '@/lib/finance'
 import { Dates } from '@/lib/trackerStats'
 import {
   accountValue, depositValue, effectiveRate, formatMoney, combinedTotal, currenciesInUse, convert,
@@ -20,8 +20,8 @@ function parseMoney(s: string): number {
   return isNaN(n) ? 0 : n
 }
 
-type View = { name: 'list' | 'detail'; id?: string }
-type Modal = null | 'account' | 'op' | 'menu' | 'rates' | 'cats' | 'budgets' | 'space' | 'reports'
+type View = { name: 'list' | 'detail' | 'credits' | 'credit-detail'; id?: string }
+type Modal = null | 'account' | 'op' | 'menu' | 'rates' | 'cats' | 'budgets' | 'space' | 'reports' | 'credit' | 'credit-pay'
 
 export default function FinancePage() {
   const [spaces, setSpaces] = useState<Space[]>([])
@@ -32,11 +32,14 @@ export default function FinancePage() {
   const [settings, setSettings] = useState<FinanceSettings>({ baseCurrency: '', rates: {} })
   const [categories, setCategories] = useState<Category[]>([])
   const [budgets, setBudgets] = useState<Budget[]>([])
+  const [credits, setCredits] = useState<Credit[]>([])
   const [loading, setLoading] = useState(true)
   const [view, setView] = useState<View>({ name: 'list' })
   const [modal, setModal] = useState<Modal>(null)
   const [editingAcc, setEditingAcc] = useState<Account | null>(null)
   const [editingOp, setEditingOp] = useState<Txn | null>(null)
+  const [editingCredit, setEditingCredit] = useState<Credit | null>(null)
+  const [payingCredit, setPayingCredit] = useState<Credit | null>(null)
   const [toast, setToast] = useState<string | null>(null)
 
   const today = useMemo(() => Dates.todayKey(), [])
@@ -44,16 +47,18 @@ export default function FinancePage() {
   const loadData = useCallback(async (sid: string) => {
     const qs = `?spaceId=${sid}`
     // курсы валют глобальные (не привязаны к spaceId) — грузятся отдельно ниже
-    const [a, t, c, b] = await Promise.all([
+    const [a, t, c, b, cr] = await Promise.all([
       fetch(`/api/finance/accounts${qs}`).then(r => r.json()),
       fetch(`/api/finance/txns${qs}`).then(r => r.json()),
       fetch(`/api/finance/categories${qs}`).then(r => r.json()),
       fetch(`/api/finance/budgets${qs}`).then(r => r.json()),
+      fetch(`/api/finance/credits${qs}`).then(r => r.json()),
     ])
     setAccounts(Array.isArray(a) ? a : [])
     setTxns(Array.isArray(t) ? t : [])
     setCategories(Array.isArray(c) ? c : [])
     setBudgets(Array.isArray(b) ? b : [])
+    setCredits(Array.isArray(cr) ? cr : [])
   }, [])
 
   useEffect(() => {
@@ -285,8 +290,59 @@ export default function FinancePage() {
     await fetch('/api/finance/budgets', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ categoryId, amount }) })
   }, [])
 
+  // ── кредиты / долги / рассрочки ─────────────────────────────────────────────
+  const patchCredit = (id: string, patch: Partial<Credit>) => setCredits(prev => prev.map(c => c.id === id ? { ...c, ...patch } : c))
+
+  const saveCredit = useCallback(async (data: any, editing: Credit | null) => {
+    if (editing) {
+      patchCredit(editing.id, data)
+      await fetch(`/api/finance/credits/${editing.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+      showToast('Сохранено')
+    } else {
+      const res = await fetch('/api/finance/credits', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...data, spaceId }) })
+      if (!res.ok) { showToast('Не удалось'); return }
+      const created: Credit = await res.json()
+      setCredits(prev => [created, ...prev])
+      showToast('Добавлено')
+    }
+    setModal(null); setEditingCredit(null)
+  }, [showToast, spaceId])
+
+  const deleteCreditFn = useCallback(async (c: Credit) => {
+    setCredits(prev => prev.filter(x => x.id !== c.id))
+    await fetch(`/api/finance/credits/${c.id}`, { method: 'DELETE' })
+    setModal(null); setEditingCredit(null); setView({ name: 'credits' }); showToast('Удалено')
+  }, [showToast])
+
+  const closeCreditFn = useCallback(async (c: Credit) => {
+    patchCredit(c.id, { archived: true })
+    await fetch(`/api/finance/credits/${c.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ archived: true }) })
+    showToast('Закрыто')
+  }, [showToast])
+
+  // платёж по кредиту/долгу: списывает/зачисляет на выбранный счёт и уменьшает остаток
+  const payCreditFn = useCallback(async (c: Credit, data: { accountId: string | null; amount: number; day: string; comment: string; advanceNextPayment: boolean }) => {
+    const res = await fetch(`/api/finance/credits/${c.id}/payments`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+    if (!res.ok) { showToast('Не удалось'); return }
+    const { payment, credit }: { payment: CreditPayment; credit: Credit } = await res.json()
+    patchCredit(c.id, { remaining: credit.remaining, archived: credit.archived, nextPaymentDate: credit.nextPaymentDate, payments: [payment, ...c.payments] })
+    if (data.accountId) bump(data.accountId, c.direction === 'owe' ? -Math.abs(data.amount) : Math.abs(data.amount))
+    setModal(null); setPayingCredit(null)
+    showToast(credit.archived ? 'Оплачено полностью 🎉' : 'Платёж записан')
+  }, [showToast])
+
+  const deleteCreditPaymentFn = useCallback(async (c: Credit, p: CreditPayment) => {
+    const res = await fetch(`/api/finance/credits/payments/${p.id}`, { method: 'DELETE' })
+    if (!res.ok) return
+    const r = await res.json()
+    patchCredit(c.id, { remaining: c.remaining + Math.abs(p.amount), archived: false, payments: c.payments.filter(x => x.id !== p.id) })
+    if (r.accountId && r.accountDelta) bump(r.accountId, r.accountDelta)
+  }, [])
+
   const detailAcc = view.name === 'detail' ? accounts.find(a => a.id === view.id) : null
+  const detailCredit = view.name === 'credit-detail' ? credits.find(c => c.id === view.id) : null
   const openAccountSheet = (a: Account | null) => { setEditingAcc(a); setModal('account') }
+  const openCreditSheet = (c: Credit | null) => { setEditingCredit(c); setModal('credit') }
 
   return (
     <div className="tk-root">
@@ -297,10 +353,11 @@ export default function FinancePage() {
           )}
           {view.name === 'list' && (
             <ListView
-              active={active} txns={txns} settings={settings} categories={categories} budgets={budgets} accounts={accounts}
+              active={active} txns={txns} settings={settings} categories={categories} budgets={budgets} accounts={accounts} credits={credits}
               today={today} catInfo={catInfo}
               onOpenAccount={id => setView({ name: 'detail', id })}
               onAddAccount={() => openAccountSheet(null)}
+              onOpenCredits={() => setView({ name: 'credits' })}
               onSettings={() => setModal('menu')}
               onDeleteOp={deleteOp} onEditOp={setEditingOp}
             />
@@ -315,16 +372,37 @@ export default function FinancePage() {
               onTopUp={topUpDeposit} onAccrue={accrueInterest}
             />
           )}
+          {view.name === 'credits' && (
+            <CreditsListView
+              credits={credits} today={today}
+              onOpen={id => setView({ name: 'credit-detail', id })}
+              onAdd={() => openCreditSheet(null)}
+              onBack={() => setView({ name: 'list' })}
+            />
+          )}
+          {view.name === 'credit-detail' && detailCredit && (
+            <CreditDetailView
+              credit={detailCredit} accounts={spendable} today={today}
+              onBack={() => setView({ name: 'credits' })}
+              onEdit={openCreditSheet} onClose={closeCreditFn}
+              onPay={() => { setPayingCredit(detailCredit); setModal('credit-pay') }}
+              onDeletePayment={p => deleteCreditPaymentFn(detailCredit, p)}
+              accountName={id => accounts.find(a => a.id === id)?.name ?? ''}
+            />
+          )}
         </main>
       )}
 
       {!loading && view.name === 'list' && active.length > 0 && (
         <button className="tk-fab" onClick={() => (spendable.length ? setModal('op') : openAccountSheet(null))} aria-label="Новая операция">+</button>
       )}
+      {!loading && view.name === 'credits' && (
+        <button className="tk-fab" onClick={() => openCreditSheet(null)} aria-label="Новый кредит или долг">+</button>
+      )}
 
       {modal === 'account' && <AccountSheet editing={editingAcc} today={today} onClose={() => { setModal(null); setEditingAcc(null) }} onSave={saveAccount} onDelete={deleteAccount} />}
       {modal === 'op' && <OperationSheet accounts={spendable} categories={categories} onClose={() => setModal(null)} onSave={addOp} onTransfer={addTransfer} onAddAccount={() => openAccountSheet(null)} />}
-      {modal === 'menu' && <SettingsMenu onClose={() => setModal(null)} onReports={() => setModal('reports')} onRates={() => setModal('rates')} onCats={() => setModal('cats')} onBudgets={() => setModal('budgets')} onSpaces={() => setModal('space')} />}
+      {modal === 'menu' && <SettingsMenu onClose={() => setModal(null)} onReports={() => setModal('reports')} onRates={() => setModal('rates')} onCats={() => setModal('cats')} onBudgets={() => setModal('budgets')} onSpaces={() => setModal('space')} onCredits={() => { setModal(null); setView({ name: 'credits' }) }} />}
       {modal === 'reports' && <ReportsSheet accounts={active} txns={txns} categories={categories} settings={settings} today={today} onClose={() => setModal('menu')} />}
       {editingOp && <EditOpSheet t={editingOp} categories={categories} onClose={() => setEditingOp(null)} onSave={patch => { editOp(editingOp, patch); setEditingOp(null) }} />}
       {modal === 'space' && (
@@ -337,6 +415,12 @@ export default function FinancePage() {
       {modal === 'rates' && <RatesSheet settings={settings} onClose={() => setModal('menu')} onSave={saveSettings} />}
       {modal === 'cats' && <CategoriesSheet categories={categories} onClose={() => setModal('menu')} onAdd={addCategory} onDelete={deleteCategory} />}
       {modal === 'budgets' && <BudgetsSheet categories={categories} budgets={budgets} txns={txns} accounts={accounts} settings={settings} today={today} onClose={() => setModal('menu')} onSet={setBudget} />}
+      {modal === 'credit' && <CreditSheet editing={editingCredit} today={today} onClose={() => { setModal(null); setEditingCredit(null) }} onSave={saveCredit} onDelete={deleteCreditFn} />}
+      {modal === 'credit-pay' && payingCredit && (
+        <PaymentSheet credit={payingCredit} accounts={spendable} today={today}
+          onClose={() => { setModal(null); setPayingCredit(null) }}
+          onSave={data => payCreditFn(payingCredit, data)} />
+      )}
       {toast && <div className="tk-toast">{toast}</div>}
     </div>
   )
@@ -386,10 +470,10 @@ function FinanceSkeleton() {
 }
 
 // ── Список ───────────────────────────────────────────────────────────────────
-function ListView({ active, txns, settings, categories, budgets, accounts, today, catInfo, onOpenAccount, onAddAccount, onSettings, onDeleteOp, onEditOp }: {
-  active: Account[]; txns: Txn[]; settings: FinanceSettings; categories: Category[]; budgets: Budget[]; accounts: Account[]
+function ListView({ active, txns, settings, categories, budgets, accounts, credits, today, catInfo, onOpenAccount, onAddAccount, onOpenCredits, onSettings, onDeleteOp, onEditOp }: {
+  active: Account[]; txns: Txn[]; settings: FinanceSettings; categories: Category[]; budgets: Budget[]; accounts: Account[]; credits: Credit[]
   today: string; catInfo: (k: string) => { emoji: string; label: string }
-  onOpenAccount: (id: string) => void; onAddAccount: () => void; onSettings: () => void; onDeleteOp: (t: Txn) => void; onEditOp: (t: Txn) => void
+  onOpenAccount: (id: string) => void; onAddAccount: () => void; onOpenCredits: () => void; onSettings: () => void; onDeleteOp: (t: Txn) => void; onEditOp: (t: Txn) => void
 }) {
   const gear = (
     <button onClick={onSettings} aria-label="Настройки" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--tk-muted)', fontSize: 22, padding: 4 }}>⚙</button>
@@ -475,6 +559,37 @@ function ListView({ active, txns, settings, categories, budgets, accounts, today
         </>
       )}
 
+      {(() => {
+        const activeCredits = credits.filter(c => !c.archived)
+        if (!activeCredits.length) return null
+        const owe: Record<string, number> = {}
+        const owed: Record<string, number> = {}
+        for (const c of activeCredits) (c.direction === 'owe' ? owe : owed)[c.currency] = ((c.direction === 'owe' ? owe : owed)[c.currency] ?? 0) + c.remaining
+        const duePayments = activeCredits.filter(c => c.monthlyPayment && c.nextPaymentDate && c.nextPaymentDate <= today)
+        return (
+          <>
+            <div className="tk-section-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>Кредиты и долги</span>
+              <button onClick={onOpenCredits} style={{ background: 'none', border: 'none', color: 'var(--tk-accent)', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>Все →</button>
+            </div>
+            <div className="tk-block" style={{ padding: '10px 16px' }}>
+              {Object.keys(owe).length > 0 && (
+                <div className="fin-kv"><span className="k">Вы должны</span><span className="v" style={{ color: 'var(--tk-danger)' }}>{Object.entries(owe).map(([cur, v]) => formatMoney(v, cur)).join(' + ')}</span></div>
+              )}
+              {Object.keys(owed).length > 0 && (
+                <div className="fin-kv"><span className="k">Вам должны</span><span className="v" style={{ color: 'var(--tk-good)' }}>{Object.entries(owed).map(([cur, v]) => formatMoney(v, cur)).join(' + ')}</span></div>
+              )}
+              {duePayments.length > 0 && (
+                <p className="tk-hint" style={{ color: '#ffb454', marginTop: 6, marginBottom: 0 }}>
+                  {duePayments.length === 1 ? 'Пора внести платёж: ' : `Пора внести ${duePayments.length} платежа: `}
+                  {duePayments.map(c => c.name).join(', ')}
+                </p>
+              )}
+            </div>
+          </>
+        )
+      })()}
+
       <div className="tk-section-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
         <span>Счета</span>
         <button onClick={onAddAccount} style={{ background: 'none', border: 'none', color: 'var(--tk-accent)', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>+ счёт</button>
@@ -551,10 +666,12 @@ function EditOpSheet({ t, categories, onClose, onSave }: {
   const [day, setDay] = useState(t.day)
   const [submitting, setSubmitting] = useState(false)
   const cats = categories.filter(c => c.kind === (t.type === 'income' ? 'income' : 'expense'))
-  const canSave = parseMoney(amount) > 0
+  const [err, setErr] = useState('')
 
   const submit = () => {
-    if (submitting || !canSave) return
+    if (submitting) return
+    if (!(parseMoney(amount) > 0)) { setErr('Введите сумму больше нуля'); return }
+    setErr('')
     setSubmitting(true)
     onSave({ amount: parseMoney(amount), category, comment: comment.trim(), day })
   }
@@ -581,8 +698,9 @@ function EditOpSheet({ t, categories, onClose, onSave }: {
         </div>
         <div className="tk-field"><label>Дата</label><input className="tk-input" type="date" value={day} onChange={e => setDay(e.target.value)} /></div>
         <div className="tk-field"><label>Комментарий</label><input className="tk-input" maxLength={100} value={comment} onChange={e => setComment(e.target.value)} /></div>
+        {err && <p className="tk-hint" style={{ color: 'var(--tk-danger)' }}>{err}</p>}
         <div className="tk-sheet-actions">
-          <button className="tk-btn-primary" disabled={!canSave || submitting} style={{ opacity: canSave && !submitting ? 1 : .5 }} onClick={submit}>
+          <button className="tk-btn-primary" disabled={submitting} style={{ opacity: submitting ? .5 : 1 }} onClick={submit}>
             {submitting ? 'Сохраняем…' : 'Сохранить'}
           </button>
           <button className="tk-btn-ghost" onClick={onClose}>Отмена</button>
@@ -711,19 +829,27 @@ function OperationSheet({ accounts, categories, onClose, onSave, onTransfer, onA
   const [category, setCategory] = useState('')
   const [comment, setComment] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [err, setErr] = useState('')
 
   const cats = categories.filter(c => c.kind === (type === 'income' ? 'income' : 'expense'))
   const from = accounts.find(a => a.id === accountId)
   const to = accounts.find(a => a.id === toId)
   const isTransfer = type === 'transfer'
   const crossCur = isTransfer && from && to && from.currency !== to.currency
-  const canSave = isTransfer
-    ? (accountId && toId && accountId !== toId && parseMoney(amount) > 0 && (!crossCur || parseMoney(toAmount) > 0))
-    : (accountId && parseMoney(amount) > 0)
 
   // защита от двойной отправки — повторные тапы до ответа сервера дублировали операцию
   const submit = () => {
-    if (submitting || !canSave) return
+    if (submitting) return
+    if (isTransfer) {
+      if (!accountId || !toId) { setErr('Выбери, откуда и куда переводить'); return }
+      if (accountId === toId) { setErr('Счета отправления и получения должны отличаться'); return }
+      if (!(parseMoney(amount) > 0)) { setErr('Введите сумму перевода'); return }
+      if (crossCur && !(parseMoney(toAmount) > 0)) { setErr('Введите сумму зачисления в валюте получателя'); return }
+    } else {
+      if (!accountId) { setErr('Выбери счёт'); return }
+      if (!(parseMoney(amount) > 0)) { setErr('Введите сумму больше нуля'); return }
+    }
+    setErr('')
     setSubmitting(true)
     if (isTransfer) {
       onTransfer({ fromAccountId: accountId, toAccountId: toId, amount: parseMoney(amount), toAmount: crossCur ? parseMoney(toAmount) : parseMoney(amount), comment: comment.trim() })
@@ -797,12 +923,15 @@ function OperationSheet({ accounts, categories, onClose, onSave, onTransfer, onA
         )}
 
         {accounts.length > 0 && (
-          <div className="tk-sheet-actions">
-            <button className="tk-btn-primary" disabled={!canSave || submitting} style={{ opacity: canSave && !submitting ? 1 : .5 }} onClick={submit}>
-              {submitting ? 'Сохраняем…' : isTransfer ? 'Перевести' : type === 'expense' ? 'Записать расход' : 'Записать доход'}
-            </button>
-            <button className="tk-btn-ghost" onClick={onClose}>Отмена</button>
-          </div>
+          <>
+            {err && <p className="tk-hint" style={{ color: 'var(--tk-danger)' }}>{err}</p>}
+            <div className="tk-sheet-actions">
+              <button className="tk-btn-primary" disabled={submitting} style={{ opacity: submitting ? .5 : 1 }} onClick={submit}>
+                {submitting ? 'Сохраняем…' : isTransfer ? 'Перевести' : type === 'expense' ? 'Записать расход' : 'Записать доход'}
+              </button>
+              <button className="tk-btn-ghost" onClick={onClose}>Отмена</button>
+            </div>
+          </>
         )}
       </div>
     </div>
@@ -810,7 +939,7 @@ function OperationSheet({ accounts, categories, onClose, onSave, onTransfer, onA
 }
 
 // ── Меню настроек ────────────────────────────────────────────────────────────────
-function SettingsMenu({ onClose, onReports, onRates, onCats, onBudgets, onSpaces }: { onClose: () => void; onReports: () => void; onRates: () => void; onCats: () => void; onBudgets: () => void; onSpaces: () => void }) {
+function SettingsMenu({ onClose, onReports, onRates, onCats, onBudgets, onSpaces, onCredits }: { onClose: () => void; onReports: () => void; onRates: () => void; onCats: () => void; onBudgets: () => void; onSpaces: () => void; onCredits: () => void }) {
   return (
     <div className="tk-sheet">
       <div className="tk-sheet-backdrop" onClick={onClose} />
@@ -818,6 +947,7 @@ function SettingsMenu({ onClose, onReports, onRates, onCats, onBudgets, onSpaces
         <div className="tk-sheet-grab" />
         <h2>Настройки</h2>
         <div className="tk-sheet-actions">
+          <button className="tk-btn-ghost" onClick={onCredits}>💳 Кредиты и долги</button>
           <button className="tk-btn-ghost" onClick={onReports}>📊 Тенденции и отчёты</button>
           <button className="tk-btn-ghost" onClick={onSpaces}>👥 Кабинеты и доступ</button>
           <button className="tk-btn-ghost" onClick={onRates}>💱 Курсы валют</button>
@@ -873,6 +1003,8 @@ function SpaceSheet({ spaces, spaceId, myId, onClose, onSwitch, onCreate, onRena
   const [confirmLeave, setConfirmLeave] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [creating, setCreating] = useState(false)
+  const [joinErr, setJoinErr] = useState('')
+  const [createErr, setCreateErr] = useState('')
 
   const copyCode = () => {
     if (!cur) return
@@ -923,8 +1055,9 @@ function SpaceSheet({ spaces, spaceId, myId, onClose, onSwitch, onCreate, onRena
           <label>Подключиться по коду</label>
           <div className="fin-add-rate">
             <input className="tk-input" placeholder="Код кабинета" value={code} onChange={e => setCode(e.target.value)} style={{ textTransform: 'uppercase' }} />
-            <button className="tk-btn-primary" style={{ width: 'auto', padding: '0 16px' }} onClick={() => { if (code.trim()) onJoin(code) }}>Войти</button>
+            <button className="tk-btn-primary" style={{ width: 'auto', padding: '0 16px' }} onClick={() => { if (code.trim()) { setJoinErr(''); onJoin(code) } else setJoinErr('Введите код кабинета') }}>Войти</button>
           </div>
+          {joinErr && <p className="tk-hint" style={{ color: 'var(--tk-danger)' }}>{joinErr}</p>}
         </div>
 
         <div className="tk-field">
@@ -935,10 +1068,11 @@ function SpaceSheet({ spaces, spaceId, myId, onClose, onSwitch, onCreate, onRena
           <div className="fin-add-rate">
             <input className="tk-input" maxLength={30} placeholder="Например: Бизнес" value={newName} onChange={e => setNewName(e.target.value)} />
             <button className="tk-btn-primary" style={{ width: 'auto', padding: '0 16px' }} disabled={creating}
-              onClick={() => { if (newName.trim() && !creating) { setCreating(true); onCreate(newName.trim(), newEmoji); setNewName('') } }}>
+              onClick={() => { if (creating) return; if (newName.trim()) { setCreateErr(''); setCreating(true); onCreate(newName.trim(), newEmoji); setNewName('') } else setCreateErr('Введите название кабинета') }}>
               {creating ? '…' : 'Создать'}
             </button>
           </div>
+          {createErr && <p className="tk-hint" style={{ color: 'var(--tk-danger)' }}>{createErr}</p>}
         </div>
 
         <div className="tk-sheet-actions">
@@ -966,6 +1100,7 @@ function CategoriesSheet({ categories, onClose, onAdd, onDelete }: {
   const [kind, setKind] = useState<'expense' | 'income'>('expense')
   const [name, setName] = useState('')
   const [emoji, setEmoji] = useState('🍔')
+  const [err, setErr] = useState('')
   const list = categories.filter(c => c.kind === kind)
 
   return (
@@ -998,8 +1133,9 @@ function CategoriesSheet({ categories, onClose, onAdd, onDelete }: {
           </div>
           <div className="fin-add-rate">
             <input className="tk-input" placeholder="Название" value={name} onChange={e => setName(e.target.value)} maxLength={24} />
-            <button className="tk-btn-primary" style={{ width: 'auto', padding: '0 18px' }} onClick={() => { if (name.trim()) { onAdd(kind, name.trim(), emoji); setName('') } }}>Добавить</button>
+            <button className="tk-btn-primary" style={{ width: 'auto', padding: '0 18px' }} onClick={() => { if (name.trim()) { setErr(''); onAdd(kind, name.trim(), emoji); setName('') } else setErr('Введите название категории') }}>Добавить</button>
           </div>
+          {err && <p className="tk-hint" style={{ color: 'var(--tk-danger)' }}>{err}</p>}
         </div>
 
         <div className="tk-sheet-actions"><button className="tk-btn-ghost" onClick={onClose}>Готово</button></div>
@@ -1068,6 +1204,7 @@ function AccountSheet({ editing, today, onClose, onSave, onDelete }: {
   const [rateStr, setRateStr] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [confirmDel, setConfirmDel] = useState(false)
+  const [err, setErr] = useState('')
 
   const pickType = (t: Account['type']) => { setType(t); const def = ACCOUNT_TYPES.find(x => x.value === t); if (def && (!editing || emoji === '💵')) setEmoji(def.emoji) }
   const eff = parseMoney(rateStr) > 0 ? effectiveRate(parseMoney(rateStr), capitalization) : null
@@ -1075,7 +1212,10 @@ function AccountSheet({ editing, today, onClose, onSave, onDelete }: {
   // защита от двойной отправки: повторные тапы по «Добавить счёт» до ответа сервера
   // раньше создавали несколько одинаковых счетов
   const submit = () => {
-    if (submitting || !name.trim()) return
+    if (submitting) return
+    if (!name.trim()) { setErr('Введите название счёта'); return }
+    if (type === 'deposit' && !(parseMoney(principalStr) > 0)) { setErr('Укажите тело депозита'); return }
+    setErr('')
     setSubmitting(true)
     const data: any = { name: name.trim(), type, currency, emoji, color }
     if (type === 'deposit') { data.principal = parseMoney(principalStr); data.startDate = startDate; data.capitalization = capitalization; data.balance = 0 }
@@ -1124,6 +1264,7 @@ function AccountSheet({ editing, today, onClose, onSave, onDelete }: {
 
         <div className="tk-field"><label>Иконка</label><div className="tk-emoji-picker">{EMOJIS.map(e => <button key={e} type="button" className={`tk-emoji-opt ${e === emoji ? 'tk-sel' : ''}`} onClick={() => setEmoji(e)}>{e}</button>)}</div></div>
 
+        {err && <p className="tk-hint" style={{ color: 'var(--tk-danger)' }}>{err}</p>}
         <div className="tk-sheet-actions">
           <button className="tk-btn-primary" onClick={submit} disabled={submitting} style={{ opacity: submitting ? .6 : 1 }}>
             {submitting ? 'Сохраняем…' : editing ? 'Сохранить' : 'Добавить счёт'}
@@ -1405,6 +1546,329 @@ function MoneyTrend({ data, base }: { data: { month: string; value: number }[]; 
           За период: <b style={{ color: change >= 0 ? 'var(--tk-good)' : 'var(--tk-danger)' }}>{change >= 0 ? '+' : '−'}{formatMoney(Math.abs(change), base)}</b>
         </div>
       )}
+    </div>
+  )
+}
+
+// ── Кредиты / долги / рассрочки ───────────────────────────────────────────────
+function creditKindLabel(k: CreditKind): string {
+  return k === 'credit' ? 'Кредит' : k === 'installment' ? 'Рассрочка' : 'Долг'
+}
+function creditEmoji(c: Credit): string {
+  if (c.kind === 'credit') return '🏦'
+  if (c.kind === 'installment') return '🛍'
+  return c.direction === 'owed' ? '🤲' : '🤝'
+}
+
+function CreditRow({ c, today, onOpen }: { c: Credit; today: string; onOpen: (id: string) => void }) {
+  const pct = c.principal > 0 ? Math.min(100, Math.round((1 - c.remaining / c.principal) * 100)) : 0
+  const overdue = !c.archived && !!c.nextPaymentDate && c.nextPaymentDate <= today
+  return (
+    <div className="fin-acc" onClick={() => onOpen(c.id)}>
+      <div className="emo" style={{ background: 'var(--tk-card-2)', color: ACCENT }}>{creditEmoji(c)}</div>
+      <div className="mid">
+        <div className="nm">{c.name}</div>
+        <div className="sub">
+          <span>{creditKindLabel(c.kind)}{c.direction === 'owed' ? ' · вам должны' : ''}</span>
+          {c.archived && <span className="fin-chip rate">закрыт</span>}
+          {overdue && <span className="fin-chip rate" style={{ color: '#ffb454' }}>платёж просрочен</span>}
+        </div>
+      </div>
+      <div className="right">
+        <div className="val">{formatMoney(c.remaining, c.currency)}</div>
+        {c.principal > 0 && !c.archived && <div className="val-sub">{pct}% погашено</div>}
+      </div>
+    </div>
+  )
+}
+
+function CreditsListView({ credits, today, onOpen, onAdd, onBack }: {
+  credits: Credit[]; today: string; onOpen: (id: string) => void; onAdd: () => void; onBack: () => void
+}) {
+  const active = credits.filter(c => !c.archived)
+  const closed = credits.filter(c => c.archived)
+  return (
+    <>
+      <button className="tk-back" onClick={onBack}><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/></svg>Назад</button>
+      <div className="tk-page-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h1 className="tk-page-title">Кредиты и долги</h1>
+      </div>
+      {!credits.length ? (
+        <div className="tk-empty">
+          <div className="tk-em">💳</div>
+          <h3>Добавь кредит или долг</h3>
+          <p>Кредиты, рассрочки, кто должен тебе или ты кому-то — всё под контролем, ежемесячный платёж оплачивается в один тап.</p>
+          <button className="tk-btn-primary" onClick={onAdd}>+ Добавить</button>
+        </div>
+      ) : (
+        <>
+          <div className="tk-section-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span>Активные</span>
+            <button onClick={onAdd} style={{ background: 'none', border: 'none', color: 'var(--tk-accent)', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>+ добавить</button>
+          </div>
+          {active.length > 0
+            ? <div className="tk-list">{active.map(c => <CreditRow key={c.id} c={c} today={today} onOpen={onOpen} />)}</div>
+            : <p className="tk-hint" style={{ padding: '4px 0 10px' }}>Нет активных кредитов и долгов.</p>}
+          {closed.length > 0 && (
+            <>
+              <div className="tk-section-label">Закрытые</div>
+              <div className="tk-list">{closed.map(c => <CreditRow key={c.id} c={c} today={today} onOpen={onOpen} />)}</div>
+            </>
+          )}
+        </>
+      )}
+    </>
+  )
+}
+
+function CreditDetailView({ credit, accounts, today, onBack, onEdit, onClose, onPay, onDeletePayment, accountName }: {
+  credit: Credit; accounts: Account[]; today: string
+  onBack: () => void; onEdit: (c: Credit) => void; onClose: (c: Credit) => void
+  onPay: () => void; onDeletePayment: (p: CreditPayment) => void
+  accountName: (id: string) => string
+}) {
+  const pct = credit.principal > 0 ? Math.min(100, Math.round((1 - credit.remaining / credit.principal) * 100)) : 0
+  const overdue = !credit.archived && !!credit.nextPaymentDate && credit.nextPaymentDate <= today
+
+  return (
+    <>
+      <button className="tk-back" onClick={onBack}><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/></svg>Назад</button>
+      <div className="tk-detail-hero">
+        <div className="tk-emoji" style={{ background: 'var(--tk-card-2)', color: ACCENT }}>{creditEmoji(credit)}</div>
+        <div><h1>{credit.name}</h1><div className="tk-sub">{creditKindLabel(credit.kind)}{credit.counterparty ? ` · ${credit.counterparty}` : ''} · {credit.currency}</div></div>
+      </div>
+
+      <div className="tk-block">
+        <div style={{ color: 'var(--tk-muted)', fontSize: 13, fontWeight: 600 }}>{credit.direction === 'owe' ? 'Осталось заплатить' : 'Осталось получить'}</div>
+        <div className="fin-hero-amount">{formatMoney(credit.remaining, credit.currency)}</div>
+        {credit.principal > 0 && (
+          <>
+            <div className="tk-mini-track" style={{ marginTop: 10 }}><div className="tk-mini-fill" style={{ width: pct + '%', background: 'var(--tk-good)' }} /></div>
+            <p className="tk-hint" style={{ marginTop: 6, marginBottom: 0 }}>{pct}% от {formatMoney(credit.principal, credit.currency)} погашено</p>
+          </>
+        )}
+        {!credit.archived
+          ? <button className="tk-btn-primary" style={{ marginTop: 14 }} onClick={onPay}>💸 {credit.direction === 'owe' ? 'Оплатить' : 'Записать поступление'}</button>
+          : <p className="tk-hint" style={{ color: 'var(--tk-good)', marginTop: 10, marginBottom: 0 }}>✓ Закрыто</p>}
+      </div>
+
+      <div className="tk-block">
+        {credit.rate != null && <div className="fin-kv"><span className="k">Ставка</span><span className="v">{credit.rate}% годовых</span></div>}
+        {credit.monthlyPayment != null && <div className="fin-kv"><span className="k">Ежемесячный платёж</span><span className="v">{formatMoney(credit.monthlyPayment, credit.currency)}</span></div>}
+        {credit.nextPaymentDate && <div className="fin-kv"><span className="k">Следующий платёж</span><span className="v" style={{ color: overdue ? 'var(--tk-danger)' : undefined }}>{Dates.human(credit.nextPaymentDate)}{overdue ? ' · просрочен' : ''}</span></div>}
+        {credit.startDate && <div className="fin-kv"><span className="k">Открыт</span><span className="v">{Dates.human(credit.startDate)}</span></div>}
+        {credit.dueDate && <div className="fin-kv"><span className="k">Срок погашения</span><span className="v">{Dates.human(credit.dueDate)}</span></div>}
+        {credit.comment && <div className="fin-kv"><span className="k">Заметка</span><span className="v">{credit.comment}</span></div>}
+      </div>
+
+      <div className="tk-block" style={{ padding: '6px 16px' }}>
+        <div style={{ padding: '10px 0 4px', color: 'var(--tk-faint)', fontSize: 12, fontWeight: 700, textTransform: 'uppercase' }}>История платежей{credit.payments.length ? ` · ${credit.payments.length}` : ''}</div>
+        {credit.payments.length > 0
+          ? credit.payments.map(p => (
+              <div key={p.id} className="fin-kv" style={{ gap: 12 }}>
+                <div style={{ width: 34, height: 34, borderRadius: 9, background: 'var(--tk-card-2)', display: 'grid', placeItems: 'center', fontSize: 17, flex: '0 0 auto' }}>💸</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: 14.5 }}>{formatMoney(p.amount, credit.currency)}</div>
+                  <div style={{ color: 'var(--tk-muted)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {p.accountId ? accountName(p.accountId) : 'без счёта'}{p.comment ? ` · ${p.comment}` : ''} · {Dates.humanShort(p.day)}{p.authorName ? ` · ${p.authorName}` : ''}
+                  </div>
+                </div>
+                <button onClick={() => onDeletePayment(p)} aria-label="Удалить" style={{ background: 'none', border: 'none', color: 'var(--tk-faint)', cursor: 'pointer', fontSize: 15, padding: 4 }}>✕</button>
+              </div>
+            ))
+          : <p className="tk-hint" style={{ padding: '4px 0 10px' }}>Пока нет платежей.</p>}
+      </div>
+
+      <div className="tk-sheet-actions" style={{ marginTop: 8 }}>
+        <button className="tk-btn-ghost" onClick={() => onEdit(credit)}>✏️ Изменить</button>
+        {!credit.archived && <button className="tk-btn-ghost" onClick={() => onClose(credit)}>✓ Закрыть вручную</button>}
+      </div>
+    </>
+  )
+}
+
+function CreditSheet({ editing, today, onClose, onSave, onDelete }: {
+  editing: Credit | null; today: string
+  onClose: () => void
+  onSave: (data: any, editing: Credit | null) => void
+  onDelete: (c: Credit) => void
+}) {
+  const [kind, setKind] = useState<CreditKind>(editing?.kind ?? 'credit')
+  const [direction, setDirection] = useState<CreditDirection>(editing?.direction ?? 'owe')
+  const [name, setName] = useState(editing?.name ?? '')
+  const [counterparty, setCounterparty] = useState(editing?.counterparty ?? '')
+  const [currency, setCurrency] = useState(editing?.currency ?? '₸')
+  const [principalStr, setPrincipalStr] = useState(editing ? String(editing.principal) : '')
+  const [remainingStr, setRemainingStr] = useState(editing ? String(editing.remaining) : '')
+  const [rateStr, setRateStr] = useState(editing?.rate != null ? String(editing.rate) : '')
+  const [monthlyStr, setMonthlyStr] = useState(editing?.monthlyPayment != null ? String(editing.monthlyPayment) : '')
+  const [startDate, setStartDate] = useState(editing?.startDate ?? today)
+  const [dueDate, setDueDate] = useState(editing?.dueDate ?? '')
+  const [nextPaymentDate, setNextPaymentDate] = useState(editing?.nextPaymentDate ?? '')
+  const [comment, setComment] = useState(editing?.comment ?? '')
+  const [submitting, setSubmitting] = useState(false)
+  const [confirmDel, setConfirmDel] = useState(false)
+  const [err, setErr] = useState('')
+
+  const submit = () => {
+    if (submitting) return
+    if (!name.trim()) { setErr('Введите название'); return }
+    const principal = parseMoney(principalStr)
+    if (!(principal > 0)) { setErr('Укажите сумму'); return }
+    setErr('')
+    setSubmitting(true)
+    const data: any = {
+      kind, direction: kind === 'debt' ? direction : 'owe',
+      name: name.trim(), counterparty: counterparty.trim(), currency,
+      principal,
+      remaining: editing ? (remainingStr.trim() ? parseMoney(remainingStr) : principal) : principal,
+      rate: rateStr.trim() ? parseMoney(rateStr) : null,
+      monthlyPayment: monthlyStr.trim() ? parseMoney(monthlyStr) : null,
+      startDate: startDate || null, dueDate: dueDate || null,
+      nextPaymentDate: nextPaymentDate || null,
+      comment: comment.trim(),
+    }
+    onSave(data, editing)
+  }
+
+  return (
+    <div className="tk-sheet">
+      <div className="tk-sheet-backdrop" onClick={onClose} />
+      <div className="tk-sheet-card">
+        <div className="tk-sheet-grab" />
+        <h2>{editing ? 'Изменить' : 'Новый кредит / долг'}</h2>
+
+        <div className="tk-field">
+          <label>Тип</label>
+          <div className="tk-seg">
+            <button type="button" className={kind === 'credit' ? 'tk-sel' : ''} onClick={() => setKind('credit')}>Кредит</button>
+            <button type="button" className={kind === 'installment' ? 'tk-sel' : ''} onClick={() => setKind('installment')}>Рассрочка</button>
+            <button type="button" className={kind === 'debt' ? 'tk-sel' : ''} onClick={() => setKind('debt')}>Долг</button>
+          </div>
+        </div>
+
+        {kind === 'debt' && (
+          <div className="tk-field">
+            <label>Направление</label>
+            <div className="tk-seg">
+              <button type="button" className={direction === 'owe' ? 'tk-sel' : ''} onClick={() => setDirection('owe')}>Я должен</button>
+              <button type="button" className={direction === 'owed' ? 'tk-sel' : ''} onClick={() => setDirection('owed')}>Мне должны</button>
+            </div>
+          </div>
+        )}
+
+        <div className="tk-field">
+          <label>Название</label>
+          <input className="tk-input" maxLength={40} placeholder={kind === 'credit' ? 'Например: Kaspi Кредит' : kind === 'installment' ? 'Например: Рассрочка на телефон' : 'Например: Долг Диме'} value={name} onChange={e => setName(e.target.value)} />
+        </div>
+        <div className="tk-field">
+          <label>{kind === 'debt' ? 'Кто/кому (необязательно)' : 'Банк/магазин (необязательно)'}</label>
+          <input className="tk-input" maxLength={40} value={counterparty} onChange={e => setCounterparty(e.target.value)} />
+        </div>
+        <div className="tk-field"><label>Валюта</label><div className="tk-seg">{CURRENCIES.map(c => <button key={c} type="button" className={currency === c ? 'tk-sel' : ''} onClick={() => setCurrency(c)}>{c}</button>)}</div></div>
+        <div className="tk-field"><label>Сумма ({currency})</label><input className="tk-input" inputMode="decimal" placeholder="500 000" value={principalStr} onChange={e => setPrincipalStr(e.target.value)} /></div>
+        {editing && (
+          <div className="tk-field">
+            <label>Остаток сейчас ({currency})</label>
+            <input className="tk-input" inputMode="decimal" value={remainingStr} onChange={e => setRemainingStr(e.target.value)} />
+            <p className="tk-hint" style={{ marginTop: 6, marginBottom: 0 }}>Меняется автоматически платежами — правь вручную только для исправления ошибки.</p>
+          </div>
+        )}
+        <div className="tk-field"><label>Ставка, % годовых (необязательно)</label><input className="tk-input" inputMode="decimal" placeholder="18" value={rateStr} onChange={e => setRateStr(e.target.value)} /></div>
+        <div className="tk-field"><label>Ежемесячный платёж ({currency}, необязательно)</label><input className="tk-input" inputMode="decimal" placeholder="45 000" value={monthlyStr} onChange={e => setMonthlyStr(e.target.value)} /></div>
+        {monthlyStr.trim() && <div className="tk-field"><label>Дата следующего платежа</label><input className="tk-input" type="date" value={nextPaymentDate} onChange={e => setNextPaymentDate(e.target.value)} /></div>}
+        <div className="tk-field"><label>Дата открытия</label><input className="tk-input" type="date" value={startDate} onChange={e => setStartDate(e.target.value)} /></div>
+        <div className="tk-field"><label>Срок погашения (необязательно)</label><input className="tk-input" type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} /></div>
+        <div className="tk-field"><label>Заметка (необязательно)</label><input className="tk-input" maxLength={100} value={comment} onChange={e => setComment(e.target.value)} /></div>
+
+        {err && <p className="tk-hint" style={{ color: 'var(--tk-danger)' }}>{err}</p>}
+        <div className="tk-sheet-actions">
+          <button className="tk-btn-primary" onClick={submit} disabled={submitting} style={{ opacity: submitting ? .6 : 1 }}>
+            {submitting ? 'Сохраняем…' : editing ? 'Сохранить' : 'Добавить'}
+          </button>
+          {editing
+            ? <button className="tk-btn-ghost tk-btn-danger" onClick={() => confirmDel ? onDelete(editing) : setConfirmDel(true)}>
+                {confirmDel ? 'Точно удалить? Нажми ещё раз' : '🗑 Удалить навсегда'}
+              </button>
+            : <button className="tk-btn-ghost" onClick={onClose}>Отмена</button>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PaymentSheet({ credit, accounts, today, onClose, onSave }: {
+  credit: Credit; accounts: Account[]; today: string
+  onClose: () => void
+  onSave: (data: { accountId: string | null; amount: number; day: string; comment: string; advanceNextPayment: boolean }) => void
+}) {
+  const defaultAmount = credit.monthlyPayment ?? credit.remaining
+  const [amountStr, setAmountStr] = useState(defaultAmount > 0 ? String(defaultAmount) : '')
+  const matching = accounts.filter(a => a.currency === credit.currency)
+  const pickList = matching.length ? matching : accounts
+  const [accountId, setAccountId] = useState<string | null>(pickList[0]?.id ?? null)
+  const [day, setDay] = useState(today)
+  const [comment, setComment] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [err, setErr] = useState('')
+
+  const amount = parseMoney(amountStr)
+  const isFull = amount >= credit.remaining - 0.005
+  const isMonthly = credit.monthlyPayment != null && Math.abs(amount - credit.monthlyPayment) < 0.005
+
+  const submit = () => {
+    if (submitting) return
+    if (!(amount > 0)) { setErr('Введите сумму платежа'); return }
+    setErr('')
+    setSubmitting(true)
+    onSave({ accountId, amount, day, comment: comment.trim(), advanceNextPayment: isMonthly && !isFull })
+  }
+
+  return (
+    <div className="tk-sheet">
+      <div className="tk-sheet-backdrop" onClick={onClose} />
+      <div className="tk-sheet-card">
+        <div className="tk-sheet-grab" />
+        <h2>{credit.direction === 'owe' ? 'Оплатить' : 'Записать поступление'} · {credit.name}</h2>
+
+        <div className="tk-field">
+          <label>Сумма ({credit.currency})</label>
+          <input className="tk-input" inputMode="decimal" autoFocus value={amountStr} onChange={e => setAmountStr(e.target.value)} style={{ fontSize: 26, fontWeight: 800, textAlign: 'center' }} />
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+            {credit.monthlyPayment != null && (
+              <button type="button" className="tk-emoji-opt" style={{ width: 'auto', padding: '6px 12px', fontSize: 13 }} onClick={() => setAmountStr(String(credit.monthlyPayment))}>
+                Платёж {formatMoney(credit.monthlyPayment, credit.currency)}
+              </button>
+            )}
+            <button type="button" className="tk-emoji-opt" style={{ width: 'auto', padding: '6px 12px', fontSize: 13 }} onClick={() => setAmountStr(String(credit.remaining))}>
+              Закрыть полностью {formatMoney(credit.remaining, credit.currency)}
+            </button>
+          </div>
+        </div>
+
+        <div className="tk-field">
+          <label>{credit.direction === 'owe' ? 'Списать со счёта' : 'Зачислить на счёт'}</label>
+          <div className="tk-emoji-picker">
+            <button type="button" className={`tk-emoji-opt ${accountId === null ? 'tk-sel' : ''}`} style={{ width: 'auto', padding: '0 12px', fontSize: 14, fontWeight: 600 }} onClick={() => setAccountId(null)}>Без счёта</button>
+            {pickList.map(a => (
+              <button key={a.id} type="button" className={`tk-emoji-opt ${accountId === a.id ? 'tk-sel' : ''}`} style={{ width: 'auto', padding: '0 12px', gap: 6, display: 'flex', alignItems: 'center', fontSize: 14, fontWeight: 600 }} onClick={() => setAccountId(a.id)}>
+                <span style={{ fontSize: 17 }}>{a.emoji}</span>{a.name}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="tk-field"><label>Дата</label><input className="tk-input" type="date" value={day} max={today} onChange={e => setDay(e.target.value)} /></div>
+        <div className="tk-field"><label>Комментарий (необязательно)</label><input className="tk-input" maxLength={100} value={comment} onChange={e => setComment(e.target.value)} /></div>
+
+        {err && <p className="tk-hint" style={{ color: 'var(--tk-danger)' }}>{err}</p>}
+        <div className="tk-sheet-actions">
+          <button className="tk-btn-primary" disabled={submitting} style={{ opacity: submitting ? .5 : 1 }} onClick={submit}>
+            {submitting ? 'Сохраняем…' : isFull ? 'Закрыть полностью' : 'Оплатить'}
+          </button>
+          <button className="tk-btn-ghost" onClick={onClose}>Отмена</button>
+        </div>
+      </div>
     </div>
   )
 }
