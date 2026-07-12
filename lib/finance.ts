@@ -281,25 +281,6 @@ export async function saveSettings(userId: string, baseCurrency: string, rates: 
     ON CONFLICT (id) DO UPDATE SET base_currency = EXCLUDED.base_currency, rates = EXCLUDED.rates, updated_at = now()`
 }
 
-// ── Плановый бюджет на месяц (per-space) ─────────────────────────────────────────
-// «Свободно» — это не автосумма по счетам (часть денег отложена на будущее, не вся
-// свободна), а то, сколько пользователь сам решил, что можно потратить в этом месяце.
-// null = не задано (в UI показывается предложение задать).
-
-export async function getFreeBudget(spaceId: string, userId: string): Promise<number | null> {
-  if (!(await isMember(spaceId, userId))) return null
-  const rows = await sql()`SELECT free_budget::float8 AS free_budget FROM finance_space_settings WHERE space_id = ${spaceId} LIMIT 1`
-  return rows[0]?.free_budget == null ? null : Number(rows[0].free_budget)
-}
-
-export async function setFreeBudget(spaceId: string, userId: string, amount: number | null): Promise<void> {
-  if (!(await isMember(spaceId, userId))) throw new Error('not found')
-  await sql()`
-    INSERT INTO finance_space_settings (space_id, free_budget)
-    VALUES (${spaceId}, ${amount})
-    ON CONFLICT (space_id) DO UPDATE SET free_budget = EXCLUDED.free_budget`
-}
-
 // ── Транзакции ──────────────────────────────────────────────────────────────────
 
 export type TxnType = 'expense' | 'income' | 'transfer'
