@@ -74,11 +74,14 @@ async function spaceRows(userId: string) {
     ORDER BY s.created_at`
 }
 
-// список кабинетов пользователя; если нет ни одного — создаёт «Личный»
+// список кабинетов пользователя; если нет ни одного — создаёт «Личный».
+// Атомарно (ON CONFLICT на partial unique index finance_spaces_owner_personal_idx),
+// иначе параллельные GET /api/finance/spaces (двойной рендер, медленная сеть и
+// повторный тап) создавали по несколько дублей «Личный» одному пользователю.
 export async function getSpaces(userId: string): Promise<Space[]> {
   let rows = await spaceRows(userId)
   if (rows.length === 0) {
-    await createSpace(userId, 'Личный', '👤')
+    await ensurePersonalSpace(userId)
     rows = await spaceRows(userId)
   }
   const ids = (rows as any[]).map(r => r.id)
@@ -92,6 +95,25 @@ export async function getSpaces(userId: string): Promise<Space[]> {
     id: r.id, name: r.name, emoji: r.emoji, ownerId: r.owner_id, shareCode: r.share_code,
     createdAt: r.created_at, members: byId[r.id] ?? [],
   }))
+}
+
+async function ensurePersonalSpace(userId: string): Promise<void> {
+  const q = sql()
+  const inserted = await q`
+    INSERT INTO finance_spaces (name, emoji, owner_id, share_code)
+    VALUES ('Личный', '👤', ${userId}, ${genCode()})
+    ON CONFLICT (owner_id) WHERE (name = 'Личный' AND emoji = '👤') DO NOTHING
+    RETURNING id`
+  const spaceId = (inserted[0] as any)?.id
+  if (spaceId) {
+    await q`INSERT INTO finance_space_members (space_id, user_id) VALUES (${spaceId}, ${userId}) ON CONFLICT DO NOTHING`
+    return
+  }
+  // проиграли гонку за создание — участник уже добавлен победившим запросом,
+  // но на всякий случай подстрахуемся (idempotent)
+  const existing = await q`SELECT id FROM finance_spaces WHERE owner_id = ${userId} AND name = 'Личный' AND emoji = '👤' LIMIT 1`
+  const existingId = (existing[0] as any)?.id
+  if (existingId) await q`INSERT INTO finance_space_members (space_id, user_id) VALUES (${existingId}, ${userId}) ON CONFLICT DO NOTHING`
 }
 
 export async function createSpace(userId: string, name: string, emoji: string): Promise<{ id: string }> {

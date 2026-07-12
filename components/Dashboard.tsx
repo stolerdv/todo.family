@@ -46,7 +46,9 @@ export default function Dashboard({ tasks, sections, subtasks, events, onTaskCli
   }, [events])
 
   const today = new Date(); today.setHours(0,0,0,0)
-  const todayStr = today.toISOString().slice(0, 10)
+  // локальная дата, НЕ toISOString() — тот переводит в UTC и до утра по местному
+  // времени (в часовых поясах впереди UTC) показывает вчерашний день
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
 
   const activeTasks = tasks.filter(t => !DONE_STATES.includes(t.state))
 

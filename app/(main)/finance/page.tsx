@@ -132,8 +132,9 @@ export default function FinancePage() {
     showToast(`Ты в кабинете «${name}» 🎉`)
   }, [jumpToSpace, showToast])
 
+  // confirm() убран — в установленном PWA он не всплывает, кнопка выглядела нерабочей.
+  // Подтверждение теперь двойным тапом прямо в SpaceSheet.
   const leaveSpace = useCallback(async (id: string) => {
-    if (!confirm('Выйти из кабинета? Данные останутся у остальных участников.')) return
     await fetch(`/api/finance/spaces/${id}/leave`, { method: 'POST' })
     setModal(null)
     await jumpToSpace()
@@ -141,7 +142,6 @@ export default function FinancePage() {
   }, [jumpToSpace, showToast])
 
   const deleteSpace = useCallback(async (id: string) => {
-    if (!confirm('Удалить кабинет НАВСЕГДА вместе со всеми счетами и операциями?')) return
     await fetch(`/api/finance/spaces/${id}`, { method: 'DELETE' })
     setModal(null)
     await jumpToSpace()
@@ -214,7 +214,6 @@ export default function FinancePage() {
   }, [showToast])
 
   const deleteAccount = useCallback(async (acc: Account) => {
-    if (!confirm('Удалить счёт и его операции навсегда?')) return
     setAccounts(prev => prev.filter(a => a.id !== acc.id))
     setTxns(prev => prev.filter(t => t.accountId !== acc.id && t.toAccountId !== acc.id))
     await fetch(`/api/finance/accounts/${acc.id}`, { method: 'DELETE' })
@@ -638,6 +637,7 @@ function OperationSheet({ accounts, categories, onClose, onSave, onTransfer, onA
   const [toAmount, setToAmount] = useState('')
   const [category, setCategory] = useState('')
   const [comment, setComment] = useState('')
+  const [submitting, setSubmitting] = useState(false)
 
   const cats = categories.filter(c => c.kind === (type === 'income' ? 'income' : 'expense'))
   const from = accounts.find(a => a.id === accountId)
@@ -648,8 +648,10 @@ function OperationSheet({ accounts, categories, onClose, onSave, onTransfer, onA
     ? (accountId && toId && accountId !== toId && parseMoney(amount) > 0 && (!crossCur || parseMoney(toAmount) > 0))
     : (accountId && parseMoney(amount) > 0)
 
+  // защита от двойной отправки — повторные тапы до ответа сервера дублировали операцию
   const submit = () => {
-    if (!canSave) return
+    if (submitting || !canSave) return
+    setSubmitting(true)
     if (isTransfer) {
       onTransfer({ fromAccountId: accountId, toAccountId: toId, amount: parseMoney(amount), toAmount: crossCur ? parseMoney(toAmount) : parseMoney(amount), comment: comment.trim() })
     } else {
@@ -723,8 +725,8 @@ function OperationSheet({ accounts, categories, onClose, onSave, onTransfer, onA
 
         {accounts.length > 0 && (
           <div className="tk-sheet-actions">
-            <button className="tk-btn-primary" disabled={!canSave} style={{ opacity: canSave ? 1 : .5 }} onClick={submit}>
-              {isTransfer ? 'Перевести' : type === 'expense' ? 'Записать расход' : 'Записать доход'}
+            <button className="tk-btn-primary" disabled={!canSave || submitting} style={{ opacity: canSave && !submitting ? 1 : .5 }} onClick={submit}>
+              {submitting ? 'Сохраняем…' : isTransfer ? 'Перевести' : type === 'expense' ? 'Записать расход' : 'Записать доход'}
             </button>
             <button className="tk-btn-ghost" onClick={onClose}>Отмена</button>
           </div>
@@ -795,6 +797,9 @@ function SpaceSheet({ spaces, spaceId, myId, onClose, onSwitch, onCreate, onRena
   const [newName, setNewName] = useState('')
   const [newEmoji, setNewEmoji] = useState('💼')
   const [copied, setCopied] = useState(false)
+  const [confirmLeave, setConfirmLeave] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [creating, setCreating] = useState(false)
 
   const copyCode = () => {
     if (!cur) return
@@ -856,13 +861,24 @@ function SpaceSheet({ spaces, spaceId, myId, onClose, onSwitch, onCreate, onRena
           </div>
           <div className="fin-add-rate">
             <input className="tk-input" maxLength={30} placeholder="Например: Бизнес" value={newName} onChange={e => setNewName(e.target.value)} />
-            <button className="tk-btn-primary" style={{ width: 'auto', padding: '0 16px' }} onClick={() => { if (newName.trim()) { onCreate(newName.trim(), newEmoji); setNewName('') } }}>Создать</button>
+            <button className="tk-btn-primary" style={{ width: 'auto', padding: '0 16px' }} disabled={creating}
+              onClick={() => { if (newName.trim() && !creating) { setCreating(true); onCreate(newName.trim(), newEmoji); setNewName('') } }}>
+              {creating ? '…' : 'Создать'}
+            </button>
           </div>
         </div>
 
         <div className="tk-sheet-actions">
-          {cur && !isOwner && <button className="tk-btn-ghost" onClick={() => onLeave(cur.id)}>🚪 Выйти из «{cur.name}»</button>}
-          {cur && isOwner && spaces.length > 1 && <button className="tk-btn-ghost tk-btn-danger" onClick={() => onDelete(cur.id)}>🗑 Удалить «{cur.name}» навсегда</button>}
+          {cur && !isOwner && (
+            <button className="tk-btn-ghost" onClick={() => confirmLeave ? onLeave(cur.id) : setConfirmLeave(true)}>
+              {confirmLeave ? 'Точно выйти? Нажми ещё раз' : `🚪 Выйти из «${cur.name}»`}
+            </button>
+          )}
+          {cur && isOwner && spaces.length > 1 && (
+            <button className="tk-btn-ghost tk-btn-danger" onClick={() => confirmDelete ? onDelete(cur.id) : setConfirmDelete(true)}>
+              {confirmDelete ? 'Точно удалить? Нажми ещё раз' : `🗑 Удалить «${cur.name}» навсегда`}
+            </button>
+          )}
           <button className="tk-btn-ghost" onClick={onClose}>Закрыть</button>
         </div>
       </div>
@@ -977,12 +993,17 @@ function AccountSheet({ editing, today, onClose, onSave, onDelete }: {
   const [startDate, setStartDate] = useState(editing?.startDate ?? today)
   const [capitalization, setCapitalization] = useState<'monthly' | 'none'>(editing?.capitalization ?? 'monthly')
   const [rateStr, setRateStr] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [confirmDel, setConfirmDel] = useState(false)
 
   const pickType = (t: Account['type']) => { setType(t); const def = ACCOUNT_TYPES.find(x => x.value === t); if (def && (!editing || emoji === '💵')) setEmoji(def.emoji) }
   const eff = parseMoney(rateStr) > 0 ? effectiveRate(parseMoney(rateStr), capitalization) : null
 
+  // защита от двойной отправки: повторные тапы по «Добавить счёт» до ответа сервера
+  // раньше создавали несколько одинаковых счетов
   const submit = () => {
-    if (!name.trim()) return
+    if (submitting || !name.trim()) return
+    setSubmitting(true)
     const data: any = { name: name.trim(), type, currency, emoji, color }
     if (type === 'deposit') { data.principal = parseMoney(principalStr); data.startDate = startDate; data.capitalization = capitalization; data.balance = 0 }
     else data.balance = parseMoney(balanceStr)
@@ -1032,8 +1053,14 @@ function AccountSheet({ editing, today, onClose, onSave, onDelete }: {
         <div className="tk-field"><label>Цвет</label><div className="tk-color-row">{COLORS.map(c => <button key={c} type="button" className={`tk-color-dot ${c === color ? 'tk-sel' : ''}`} style={{ background: c }} onClick={() => setColor(c)} />)}</div></div>
 
         <div className="tk-sheet-actions">
-          <button className="tk-btn-primary" onClick={submit}>{editing ? 'Сохранить' : 'Добавить счёт'}</button>
-          {editing ? <button className="tk-btn-ghost tk-btn-danger" onClick={() => onDelete(editing)}>🗑 Удалить навсегда</button> : <button className="tk-btn-ghost" onClick={onClose}>Отмена</button>}
+          <button className="tk-btn-primary" onClick={submit} disabled={submitting} style={{ opacity: submitting ? .6 : 1 }}>
+            {submitting ? 'Сохраняем…' : editing ? 'Сохранить' : 'Добавить счёт'}
+          </button>
+          {editing
+            ? <button className="tk-btn-ghost tk-btn-danger" onClick={() => confirmDel ? onDelete(editing) : setConfirmDel(true)}>
+                {confirmDel ? 'Точно удалить? Нажми ещё раз' : '🗑 Удалить навсегда'}
+              </button>
+            : <button className="tk-btn-ghost" onClick={onClose}>Отмена</button>}
         </div>
       </div>
     </div>

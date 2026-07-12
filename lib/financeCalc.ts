@@ -50,9 +50,14 @@ export function accountValue(acc: Account, today: string): number {
   return acc.type === 'deposit' ? depositValue(acc, today).value : acc.balance
 }
 
-export function formatMoney(n: number, currency = '', decimals = 0): string {
-  const s = new Intl.NumberFormat('ru-RU', { minimumFractionDigits: decimals, maximumFractionDigits: decimals }).format(
-    decimals ? n : Math.round(n),
+// decimals не задан → авто: если есть копейки (не целое число) — показываем 2 знака,
+// иначе 0. Раньше всегда округляло до целого и введённые копейки визуально «терялись»
+// (сумма сохранялась верно, но не была видна на экране).
+export function formatMoney(n: number, currency = '', decimals?: number): string {
+  const hasCents = Math.round(n * 100) % 100 !== 0
+  const d = decimals !== undefined ? decimals : (hasCents ? 2 : 0)
+  const s = new Intl.NumberFormat('ru-RU', { minimumFractionDigits: d, maximumFractionDigits: d }).format(
+    d ? n : Math.round(n),
   )
   return currency ? `${s} ${currency}` : s
 }
