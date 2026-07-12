@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Task, Section, CalEvent } from '@/lib/db'
 import type { Habit } from '@/lib/tracker'
+import type { Account, FinanceSettings, Budget, Credit } from '@/lib/finance'
 import { Dates, Stats, toCalc } from '@/lib/trackerStats'
+import { combinedTotal, categorySpend, formatMoney, currenciesInUse } from '@/lib/financeCalc'
 import VoiceAssistant from '@/components/VoiceAssistant'
 
 const DONE_STATES = ['Done', 'Cancelled']
@@ -13,22 +15,55 @@ export default function TodayPage() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [sections, setSections] = useState<Section[]>([])
   const [events, setEvents] = useState<CalEvent[]>([])
+  const [accounts, setAccounts] = useState<Account[]>([])
+  const [finSettings, setFinSettings] = useState<FinanceSettings>({ baseCurrency: '', rates: {} })
+  const [finCategories, setFinCategories] = useState<{ id: string; name: string; emoji: string }[]>([])
+  const [budgets, setBudgets] = useState<Budget[]>([])
+  const [credits, setCredits] = useState<Credit[]>([])
+  const [txns, setTxns] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [quickAdd, setQuickAdd] = useState<null | 'task' | 'event'>(null)
+  const [toast, setToast] = useState<string | null>(null)
 
   const today = useMemo(() => Dates.todayKey(), [])
+  const showToast = useCallback((m: string) => { setToast(m); setTimeout(() => setToast(null), 2200) }, [])
 
   useEffect(() => {
-    Promise.all([
-      fetch('/api/tracker/habits').then(r => r.json()),
-      fetch('/api/tasks').then(r => r.json()),
-      fetch('/api/sections').then(r => r.json()),
-      fetch('/api/events').then(r => r.json()),
-    ]).then(([h, t, s, e]) => {
+    (async () => {
+      const [h, t, s, e, sp] = await Promise.all([
+        fetch('/api/tracker/habits').then(r => r.json()),
+        fetch('/api/tasks').then(r => r.json()),
+        fetch('/api/sections').then(r => r.json()),
+        fetch('/api/events').then(r => r.json()),
+        fetch('/api/finance/spaces').then(r => r.json()),
+      ])
       setHabits(Array.isArray(h) ? h : [])
       setTasks(Array.isArray(t) ? t : [])
       setSections(Array.isArray(s) ? s : [])
       setEvents(Array.isArray(e) ? e : [])
-    }).finally(() => setLoading(false))
+
+      const spaces: { id: string }[] = Array.isArray(sp) ? sp : []
+      const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('fin_space') : null
+      const spaceId = spaces.find(x => x.id === saved)?.id ?? spaces[0]?.id ?? null
+      if (spaceId) {
+        const qs = `?spaceId=${spaceId}`
+        const [acc, settings, cats, buds, crs, tx] = await Promise.all([
+          fetch(`/api/finance/accounts${qs}`).then(r => r.json()),
+          fetch('/api/finance/settings').then(r => r.json()),
+          fetch(`/api/finance/categories${qs}`).then(r => r.json()),
+          fetch(`/api/finance/budgets${qs}`).then(r => r.json()),
+          fetch(`/api/finance/credits${qs}`).then(r => r.json()),
+          fetch(`/api/finance/txns${qs}`).then(r => r.json()),
+        ])
+        setAccounts(Array.isArray(acc) ? acc : [])
+        setFinSettings(settings && typeof settings === 'object' ? settings : { baseCurrency: '', rates: {} })
+        setFinCategories(Array.isArray(cats) ? cats : [])
+        setBudgets(Array.isArray(buds) ? buds : [])
+        setCredits(Array.isArray(crs) ? crs : [])
+        setTxns(Array.isArray(tx) ? tx : [])
+      }
+      setLoading(false)
+    })()
   }, [])
 
   const toggleHabit = useCallback(async (h: Habit) => {
@@ -61,10 +96,38 @@ export default function TodayPage() {
     await fetch(`/api/tasks/${t.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ state: 'Done' }) })
   }, [])
 
+  // оплата кредита/долга одной кнопкой: сумма = ежемесячный платёж, счёт — первый
+  // подходящий по валюте (без права выбора здесь — за точным контролем в Финансы)
+  const payCreditQuick = useCallback(async (c: Credit) => {
+    const acc = accounts.find(a => !a.archived && a.type !== 'deposit' && a.currency === c.currency)
+    const amount = c.monthlyPayment ?? c.remaining
+    const res = await fetch(`/api/finance/credits/${c.id}/payments`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accountId: acc?.id ?? null, amount, advanceNextPayment: true }),
+    })
+    if (!res.ok) { showToast('Не удалось'); return }
+    const { credit } = await res.json()
+    setCredits(prev => prev.map(x => x.id === c.id ? credit : x))
+    if (acc) {
+      const delta = c.direction === 'owe' ? -amount : amount
+      setAccounts(prev => prev.map(a => a.id === acc.id ? { ...a, balance: a.balance + delta } : a))
+    }
+    showToast(credit.archived ? 'Оплачено полностью 🎉' : `Оплачено ${formatMoney(amount, c.currency)}`)
+  }, [accounts, showToast])
+
   const dueHabits = useMemo(
     () => habits.filter(h => !h.archived && Stats.isScheduled(toCalc(h), today)),
     [habits, today],
   )
+  const habitsDone = useMemo(
+    () => dueHabits.filter(h => (h.counts?.[today] ?? 0) >= (h.targetPerDay || 1)).length,
+    [dueHabits, today],
+  )
+  const streak = useMemo(() => {
+    const all = habits.filter(h => !h.archived).map(toCalc)
+    return Stats.globalStreak(all, today)
+  }, [habits, today])
+
   const activeTasks = useMemo(() => tasks.filter(t => !DONE_STATES.includes(t.state)), [tasks])
   const overdue = useMemo(
     () => activeTasks.filter(t => t.dueDate && t.dueDate < today).sort((a, b) => a.dueDate.localeCompare(b.dueDate)),
@@ -72,19 +135,47 @@ export default function TodayPage() {
   )
   const dueToday = useMemo(() => activeTasks.filter(t => t.dueDate === today), [activeTasks, today])
   const upcomingTasks = useMemo(
-    () => activeTasks.filter(t => t.dueDate > today).sort((a, b) => a.dueDate.localeCompare(b.dueDate)).slice(0, 6),
+    () => activeTasks.filter(t => t.dueDate > today).sort((a, b) => a.dueDate.localeCompare(b.dueDate)).slice(0, 5),
     [activeTasks, today],
   )
   const eventsToday = useMemo(
-    () => events.filter(e => e.day === today).sort((a, b) => (a.time || '00:00').localeCompare(b.time || '00:00')),
+    () => events.filter(e => e.day === today).sort((a, b) => (a.time || '').localeCompare(b.time || '')),
     [events, today],
   )
   const upcomingEvents = useMemo(() => {
     const limit = Dates.addDays(today, 6)
-    return events.filter(e => e.day > today && e.day <= limit).sort((a, b) => a.day === b.day ? (a.time || '00:00').localeCompare(b.time || '00:00') : a.day.localeCompare(b.day)).slice(0, 6)
+    return events.filter(e => e.day > today && e.day <= limit).sort((a, b) => a.day === b.day ? (a.time || '').localeCompare(b.time || '') : a.day.localeCompare(b.day)).slice(0, 5)
   }, [events, today])
 
   const sectionName = (id: string) => sections.find(s => s.id === id)?.name ?? ''
+
+  const agenda = useMemo(() => {
+    type Item = { key: string; sortKey: string; type: 'task'; task: Task } | { key: string; sortKey: string; type: 'event'; event: CalEvent }
+    const items: Item[] = [
+      ...dueToday.map(t => ({ key: 't-' + t.id, sortKey: '', type: 'task' as const, task: t })),
+      ...eventsToday.map(e => ({ key: 'e-' + e.id, sortKey: e.time || '', type: 'event' as const, event: e })),
+    ]
+    return items.sort((a, b) => a.sortKey.localeCompare(b.sortKey))
+  }, [dueToday, eventsToday])
+
+  // ── финансовая сводка ────────────────────────────────────────────────────────
+  const spendable = useMemo(() => accounts.filter(a => !a.archived && a.type !== 'deposit'), [accounts])
+  const effSettings = useMemo<FinanceSettings>(() => ({
+    baseCurrency: finSettings.baseCurrency || currenciesInUse(spendable)[0] || '', rates: finSettings.rates,
+  }), [finSettings, spendable])
+  const freeMoney = useMemo(() => combinedTotal(spendable, today, effSettings), [spendable, today, effSettings])
+  const overBudget = useMemo(() => {
+    return budgets
+      .map(b => ({ b, c: finCategories.find(c => c.id === b.categoryId) }))
+      .filter((x): x is { b: Budget; c: { id: string; name: string; emoji: string } } => !!x.c)
+      .map(x => ({ ...x, spent: categorySpend(x.b.categoryId, txns, accounts, effSettings, today) }))
+      .filter(x => x.spent > x.b.amount)
+  }, [budgets, finCategories, txns, accounts, effSettings, today])
+  const duePayments = useMemo(
+    () => credits.filter(c => !c.archived && c.monthlyPayment != null && c.nextPaymentDate && c.nextPaymentDate <= today),
+    [credits, today],
+  )
+
   const greeting = useMemo(() => {
     const h = new Date().getHours()
     return h < 5 ? 'Доброй ночи' : h < 12 ? 'Доброе утро' : h < 18 ? 'Добрый день' : 'Добрый вечер'
@@ -94,14 +185,36 @@ export default function TodayPage() {
     return s.charAt(0).toUpperCase() + s.slice(1)
   }, [today])
 
-  const nothingPlanned = dueHabits.length === 0 && overdue.length === 0 && dueToday.length === 0
-    && eventsToday.length === 0 && upcomingTasks.length === 0 && upcomingEvents.length === 0
+  const nothingPlanned = dueHabits.length === 0 && overdue.length === 0 && agenda.length === 0
+    && upcomingTasks.length === 0 && upcomingEvents.length === 0 && duePayments.length === 0
+
+  const addTask = useCallback(async (title: string) => {
+    let sid = sections.find(s => !s.archived)?.id
+    if (!sid) {
+      const created = await fetch('/api/sections', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Входящие' }) }).then(r => r.json())
+      if (!created?.id) { showToast('Не удалось создать список'); return }
+      setSections(prev => [...prev, created])
+      sid = created.id
+    }
+    const task = await fetch('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sectionId: sid, title }) }).then(r => r.json())
+    if (!task?.id) { showToast('Не удалось добавить'); return }
+    await fetch(`/api/tasks/${task.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dueDate: today }) })
+    setTasks(prev => [...prev, { ...task, dueDate: today }])
+    showToast('Задача добавлена')
+  }, [sections, today, showToast])
+
+  const addEvent = useCallback(async (title: string, time: string) => {
+    const created = await fetch('/api/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ day: today, time, title }) }).then(r => r.json())
+    if (!created?.id) { showToast('Не удалось добавить'); return }
+    setEvents(prev => [...prev, created])
+    showToast('Событие добавлено')
+  }, [today, showToast])
 
   if (loading) {
     return (
       <div className="px-4 md:px-6 py-5 space-y-4">
         <div className="h-6 w-40 rounded-lg bg-white/5 animate-pulse" />
-        <div className="h-24 rounded-2xl bg-white/5 animate-pulse" />
+        <div className="h-16 rounded-2xl bg-white/5 animate-pulse" />
         <div className="h-24 rounded-2xl bg-white/5 animate-pulse" />
       </div>
     )
@@ -112,14 +225,79 @@ export default function TodayPage() {
       <div>
         <p className="text-accent-400 text-sm font-semibold">{greeting}</p>
         <h1 className="text-xl font-bold text-white">{dateLabel}</h1>
+        <p className="text-xs text-gray-500 mt-1">
+          {streak.current > 0 ? `🔥 Серия без пропусков: ${streak.current} ${plural(streak.current)}` : dueHabits.length > 0 ? 'Выполни все привычки сегодня — начни новую серию' : ' '}
+        </p>
       </div>
+
+      {spendable.length > 0 && (
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3.5">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-500">Свободно</span>
+            <span className="text-base font-bold text-white">≈ {formatMoney(freeMoney.total, effSettings.baseCurrency)}</span>
+          </div>
+          {overBudget.length > 0 && (
+            <p className="text-xs text-red-400 mt-1.5">
+              Превышен бюджет: {overBudget.map(x => x.c.name).join(', ')}
+            </p>
+          )}
+        </div>
+      )}
+
+      {!nothingPlanned && (
+        <div className="flex gap-2.5">
+          {dueHabits.length > 0 && <StatPill value={`${habitsDone}/${dueHabits.length}`} label="Привычки" tone={habitsDone >= dueHabits.length ? 'good' : undefined} />}
+          <StatPill value={String(overdue.length)} label="Просрочено" tone={overdue.length > 0 ? 'red' : undefined} />
+          <StatPill value={String(agenda.length)} label="Сегодня" tone={agenda.length > 0 ? 'accent' : undefined} />
+        </div>
+      )}
 
       {nothingPlanned && (
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <span className="text-4xl mb-2">🌤</span>
           <p className="text-gray-400 text-sm">На сегодня ничего не запланировано</p>
-          <p className="text-gray-700 text-xs mt-1">Продиктуй задачу или событие через чат внизу справа</p>
+          <p className="text-gray-700 text-xs mt-1">Добавь через + внизу или продиктуй в чате</p>
         </div>
+      )}
+
+      {overdue.length > 0 && (
+        <Section title="Просрочено" count={overdue.length} accent="red">
+          <div className="space-y-1.5">
+            {overdue.map(t => <TaskRow key={t.id} t={t} sectionName={sectionName(t.sectionId)} today={today} onDone={markTaskDone} showDate />)}
+          </div>
+        </Section>
+      )}
+
+      {duePayments.length > 0 && (
+        <Section title="Платежи" count={duePayments.length} accent="red">
+          <div className="space-y-1.5">
+            {duePayments.map(c => (
+              <div key={c.id} className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-gray-200 truncate">{c.name}</p>
+                  <p className={`text-xs mt-0.5 ${c.nextPaymentDate! < today ? 'text-red-400' : 'text-gray-500'}`}>
+                    {formatMoney(c.monthlyPayment!, c.currency)}{c.nextPaymentDate! < today ? ' · просрочен' : ' · сегодня'}
+                  </p>
+                </div>
+                <button onClick={() => payCreditQuick(c)}
+                  className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-bold text-[#120a00]"
+                  style={{ background: 'linear-gradient(135deg, #ffa04d, #ff7a1a)' }}>
+                  Оплатить
+                </button>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {agenda.length > 0 && (
+        <Section title="Расписание на сегодня" count={agenda.length}>
+          <div className="space-y-1.5">
+            {agenda.map(item => item.type === 'task'
+              ? <ScheduleTaskRow key={item.key} t={item.task} sectionName={sectionName(item.task.sectionId)} onDone={markTaskDone} />
+              : <ScheduleEventRow key={item.key} e={item.event} />)}
+          </div>
+        </Section>
       )}
 
       {dueHabits.length > 0 && (
@@ -146,40 +324,48 @@ export default function TodayPage() {
         </Section>
       )}
 
-      {overdue.length > 0 && (
-        <Section title="Просрочено" count={overdue.length} accent="red">
-          <div className="space-y-1.5">
-            {overdue.map(t => <TaskRow key={t.id} t={t} sectionName={sectionName(t.sectionId)} today={today} onDone={markTaskDone} />)}
-          </div>
-        </Section>
-      )}
-
-      {dueToday.length > 0 && (
-        <Section title="Сегодня" count={dueToday.length}>
-          <div className="space-y-1.5">
-            {dueToday.map(t => <TaskRow key={t.id} t={t} sectionName={sectionName(t.sectionId)} today={today} onDone={markTaskDone} />)}
-          </div>
-        </Section>
-      )}
-
-      {eventsToday.length > 0 && (
-        <Section title="События сегодня" count={eventsToday.length}>
-          <div className="space-y-1.5">
-            {eventsToday.map(e => <EventRow key={e.id} e={e} />)}
-          </div>
-        </Section>
-      )}
-
       {(upcomingTasks.length > 0 || upcomingEvents.length > 0) && (
         <Section title="Ближайшие дни">
-          <div className="space-y-1.5">
-            {upcomingEvents.map(e => <EventRow key={e.id} e={e} showDate />)}
-            {upcomingTasks.map(t => <TaskRow key={t.id} t={t} sectionName={sectionName(t.sectionId)} today={today} onDone={markTaskDone} showDate />)}
+          <div className="space-y-1">
+            {upcomingEvents.map(e => <CompactRow key={e.id} time={e.time ? `${Dates.humanShort(e.day)} · ${e.time}` : Dates.humanShort(e.day)} title={e.title} />)}
+            {upcomingTasks.map(t => <CompactRow key={t.id} time={Dates.humanShort(t.dueDate)} title={t.title} />)}
           </div>
         </Section>
       )}
 
+      <button onClick={() => setQuickAdd('task')} aria-label="Быстро добавить"
+        className="fixed z-40 grid place-items-center rounded-full shadow-lg text-white text-2xl font-light"
+        style={{ left: 20, bottom: 'calc(84px + env(safe-area-inset-bottom, 0px))', width: 52, height: 52, background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.14)' }}>
+        +
+      </button>
       <VoiceAssistant />
+
+      {quickAdd && <QuickAddSheet type={quickAdd} onClose={() => setQuickAdd(null)} onAddTask={addTask} onAddEvent={addEvent} />}
+      {toast && (
+        <div className="fixed left-1/2 -translate-x-1/2 z-[110] rounded-full bg-white/10 border border-white/15 px-4 py-2 text-sm text-white backdrop-blur"
+          style={{ bottom: 'calc(150px + env(safe-area-inset-bottom, 0px))' }}>
+          {toast}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function plural(n: number): string {
+  const n10 = n % 10, n100 = n % 100
+  if (n100 >= 11 && n100 <= 14) return 'дней'
+  if (n10 === 1) return 'день'
+  if (n10 >= 2 && n10 <= 4) return 'дня'
+  return 'дней'
+}
+
+function StatPill({ value, label, tone }: { value: string; label: string; tone?: 'red' | 'accent' | 'good' }) {
+  const color = tone === 'red' ? 'text-red-400' : tone === 'accent' ? 'text-accent-400' : tone === 'good' ? 'text-green-400' : 'text-white'
+  const bg = tone === 'red' ? 'border-red-500/20 bg-red-500/10' : tone === 'accent' ? 'border-accent-500/20 bg-accent-500/10' : tone === 'good' ? 'border-green-500/20 bg-green-500/10' : 'border-white/10 bg-white/[0.03]'
+  return (
+    <div className={`flex-1 rounded-xl border px-3 py-2.5 text-center ${bg}`}>
+      <div className={`text-lg font-bold tabular-nums ${color}`}>{value}</div>
+      <div className="text-[11px] text-gray-500 mt-0.5">{label}</div>
     </div>
   )
 }
@@ -205,30 +391,103 @@ function TaskRow({ t, sectionName, today, onDone, showDate }: { t: Task; section
         <p className="text-sm text-gray-200 truncate">{t.title}</p>
         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
           {sectionName && <span className="text-xs text-gray-600">{sectionName}</span>}
-          {showDate && t.dueDate && (
-            <span className={`text-xs px-1.5 py-0.5 rounded-full ${t.dueDate < today ? 'text-red-400 bg-red-500/10' : 'text-gray-500'}`}>
-              {Dates.humanShort(t.dueDate)}
-            </span>
-          )}
-          {!showDate && overdueDays > 0 && <span className="text-xs px-1.5 py-0.5 rounded-full text-red-400 bg-red-500/10">просрочено {overdueDays}д</span>}
+          {showDate && overdueDays > 0 && <span className="text-xs px-1.5 py-0.5 rounded-full text-red-400 bg-red-500/10">просрочено {overdueDays}д</span>}
         </div>
       </div>
     </div>
   )
 }
 
-function EventRow({ e, showDate }: { e: CalEvent; showDate?: boolean }) {
+function ScheduleTaskRow({ t, sectionName, onDone }: { t: Task; sectionName: string; onDone: (t: Task) => void }) {
   return (
     <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-3">
-      <span className="text-xs font-bold text-accent-400 tabular-nums w-11 shrink-0">{e.time || 'весь день'}</span>
+      <span className="text-[11px] font-bold text-gray-500 uppercase tabular-nums w-14 shrink-0">Весь день</span>
+      <button onClick={() => onDone(t)} aria-label="Отметить выполненной"
+        className="shrink-0 w-6 h-6 rounded-full border-2 border-gray-600 hover:border-accent-400 transition" />
+      <div className="flex-1 min-w-0">
+        <p className="text-sm text-gray-200 truncate">{t.title}</p>
+        {sectionName && <p className="text-xs text-gray-600 truncate">{sectionName}</p>}
+      </div>
+    </div>
+  )
+}
+
+function ScheduleEventRow({ e }: { e: CalEvent }) {
+  return (
+    <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-3">
+      <span className="text-sm font-bold text-accent-400 tabular-nums w-14 shrink-0">{e.time || 'Весь день'}</span>
       <div className="flex-1 min-w-0">
         <p className="text-sm text-gray-200 truncate">{e.title}</p>
-        {(e.endTime || e.note || showDate) && (
+        {(e.endTime || e.note) && (
           <p className="text-xs text-gray-500 truncate">
-            {showDate ? Dates.humanShort(e.day) : ''}{showDate && (e.endTime || e.note) ? ' · ' : ''}
             {e.endTime ? `до ${e.endTime}` : ''}{e.endTime && e.note ? ' · ' : ''}{e.note}
           </p>
         )}
+      </div>
+    </div>
+  )
+}
+
+function CompactRow({ time, title }: { time: string; title: string }) {
+  return (
+    <div className="flex items-center gap-3 px-1 py-1.5">
+      <span className="text-xs text-gray-500 tabular-nums w-24 shrink-0">{time}</span>
+      <p className="text-sm text-gray-300 truncate">{title}</p>
+    </div>
+  )
+}
+
+// ── Быстрое добавление задачи/события на сегодня (запасной путь без чата — у ассистента лимит 15 команд/мес) ──
+function QuickAddSheet({ type, onClose, onAddTask, onAddEvent }: {
+  type: 'task' | 'event'; onClose: () => void
+  onAddTask: (title: string) => Promise<void>; onAddEvent: (title: string, time: string) => Promise<void>
+}) {
+  const [kind, setKind] = useState<'task' | 'event'>(type)
+  const [title, setTitle] = useState('')
+  const [time, setTime] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  const submit = async () => {
+    if (submitting || !title.trim()) return
+    setSubmitting(true)
+    if (kind === 'task') await onAddTask(title.trim())
+    else await onAddEvent(title.trim(), time)
+    setSubmitting(false)
+    onClose()
+  }
+
+  return (
+    <div className="fixed inset-0 z-[120] flex items-end justify-center">
+      <div className="absolute inset-0 bg-black/70" onClick={onClose} />
+      <div className="relative w-full max-w-md rounded-t-3xl border-t border-white/10 p-6"
+        style={{ background: 'linear-gradient(160deg, #161618, #0b0b0c)', paddingBottom: 'calc(28px + env(safe-area-inset-bottom, 0px))' }}>
+        <div className="w-10 h-1 rounded-full bg-white/15 mx-auto mb-5" />
+        <div className="flex rounded-xl border border-white/10 p-1 mb-5">
+          <button onClick={() => setKind('task')} className={`flex-1 py-2 rounded-lg text-sm font-semibold transition ${kind === 'task' ? 'bg-accent-600 text-[#120a00]' : 'text-gray-400'}`}>Задача</button>
+          <button onClick={() => setKind('event')} className={`flex-1 py-2 rounded-lg text-sm font-semibold transition ${kind === 'event' ? 'bg-accent-600 text-[#120a00]' : 'text-gray-400'}`}>Событие</button>
+        </div>
+
+        <label className="block text-xs font-semibold text-gray-400 mb-1.5">{kind === 'task' ? 'Что нужно сделать сегодня' : 'Что за событие'}</label>
+        <input autoFocus value={title} onChange={e => setTitle(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && title.trim()) submit() }}
+          placeholder={kind === 'task' ? 'Например: позвонить в поликлинику' : 'Например: встреча в центре'}
+          className="w-full bg-white/[0.04] border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 outline-none focus:border-accent-500 mb-4" />
+
+        {kind === 'event' && (
+          <>
+            <label className="block text-xs font-semibold text-gray-400 mb-1.5">Время (необязательно — иначе «весь день»)</label>
+            <input type="time" value={time} onChange={e => setTime(e.target.value)}
+              className="w-full bg-white/[0.04] border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-accent-500 [color-scheme:dark] mb-4" />
+          </>
+        )}
+
+        <div className="flex gap-3 mt-2">
+          <button onClick={onClose} className="flex-1 border border-white/10 text-gray-300 font-medium py-3 rounded-xl transition hover:bg-white/[0.04]">Отмена</button>
+          <button onClick={submit} disabled={!title.trim() || submitting}
+            className="flex-1 bg-accent-600 hover:bg-accent-500 text-[#120a00] font-bold py-3 rounded-xl transition active:scale-[.98] disabled:opacity-40">
+            {submitting ? 'Добавляем…' : 'Добавить'}
+          </button>
+        </div>
       </div>
     </div>
   )

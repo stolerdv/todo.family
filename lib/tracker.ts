@@ -105,7 +105,7 @@ export async function createHabit(userId: string, h: HabitInput): Promise<Habit>
     VALUES (
       ${userId}, ${h.name}, ${h.description ?? ''}, ${h.emoji ?? '✅'}, ${h.color ?? '#6d8bff'},
       ${JSON.stringify(h.schedule ?? { type: 'daily' })}::jsonb,
-      ${h.startDate ?? null}::date, ${clampTarget(h.targetPerDay)}
+      COALESCE(${h.startDate ?? null}::date, CURRENT_DATE), ${clampTarget(h.targetPerDay)}
     )
     RETURNING id, user_id, name, description, emoji, color, schedule,
               to_char(start_date, 'YYYY-MM-DD') AS start_date, archived, sort_order, created_at, target_per_day`

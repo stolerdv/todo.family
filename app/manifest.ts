@@ -5,7 +5,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: 'Pen',
     short_name: 'Pen',
     description: 'Привычки, финансы и напоминания — организация жизни',
-    start_url: '/tracker',
+    start_url: '/today',
     display: 'standalone',
     background_color: '#000000',
     theme_color: '#000000',
