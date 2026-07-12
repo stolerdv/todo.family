@@ -11,7 +11,7 @@ import '../tracker/tracker.css'
 import './finance.css'
 
 const CURRENCIES = ['₸', '€', '$']
-const COLORS = ['#3ddc97', '#6d8bff', '#ffb454', '#ff6b6b', '#9a7bff', '#4dd0e1', '#f06292', '#a1e34a']
+const ACCENT = '#ff7a1a' // единый янтарный акцент — цвета счетов убраны (моно-тема)
 const EMOJIS = ['💵','💳','🏦','🐷','📈','💰','💶','💴','🪙','💎','🏠','🚗','📱','🎁']
 const CAT_EMOJIS = ['🍔','🛒','🚗','🏠','☕','💊','🎉','👕','📱','🎁','💸','✈️','🎮','📚','🐶','💅','🍺','⛽','🚕','🏥','💼','🛠','↩️','💰','🎯','🎓','🏋️','🌸']
 
@@ -42,22 +42,23 @@ export default function FinancePage() {
 
   const loadData = useCallback(async (sid: string) => {
     const qs = `?spaceId=${sid}`
-    const [a, t, s, c, b] = await Promise.all([
+    // курсы валют глобальные (не привязаны к spaceId) — грузятся отдельно ниже
+    const [a, t, c, b] = await Promise.all([
       fetch(`/api/finance/accounts${qs}`).then(r => r.json()),
       fetch(`/api/finance/txns${qs}`).then(r => r.json()),
-      fetch(`/api/finance/settings${qs}`).then(r => r.json()),
       fetch(`/api/finance/categories${qs}`).then(r => r.json()),
       fetch(`/api/finance/budgets${qs}`).then(r => r.json()),
     ])
     setAccounts(Array.isArray(a) ? a : [])
     setTxns(Array.isArray(t) ? t : [])
-    setSettings(s && typeof s === 'object' ? s : { baseCurrency: '', rates: {} })
     setCategories(Array.isArray(c) ? c : [])
     setBudgets(Array.isArray(b) ? b : [])
   }, [])
 
   useEffect(() => {
     fetch('/api/me').then(r => r.json()).then(me => setMyId(me?.userId ?? null)).catch(() => {})
+    // курсы валют — глобальные, грузятся один раз, не зависят от активного кабинета
+    fetch('/api/finance/settings').then(r => r.json()).then(s => setSettings(s && typeof s === 'object' ? s : { baseCurrency: '', rates: {} })).catch(() => {})
     fetch('/api/finance/spaces').then(r => r.json()).then(async (sp) => {
       const list: Space[] = Array.isArray(sp) ? sp : []
       setSpaces(list)
@@ -248,9 +249,9 @@ export default function FinancePage() {
   // ── настройки ───────────────────────────────────────────────────────────────
   const saveSettings = useCallback(async (baseCurrency: string, rates: Record<string, number>) => {
     setSettings({ baseCurrency, rates })
-    await fetch('/api/finance/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spaceId, baseCurrency, rates }) })
-    setModal(null); showToast('Курсы сохранены')
-  }, [spaceId, showToast])
+    await fetch('/api/finance/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ baseCurrency, rates }) })
+    setModal(null); showToast('Курсы сохранены — теперь одинаковые во всех кабинетах')
+  }, [showToast])
 
   const addCategory = useCallback(async (kind: 'expense' | 'income', name: string, emoji: string) => {
     const res = await fetch('/api/finance/categories', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spaceId, kind, name, emoji }) })
@@ -485,7 +486,7 @@ function AccountRow({ a, today, onOpen }: { a: Account; today: string; onOpen: (
   const dep = a.type === 'deposit' ? depositValue(a, today) : null
   return (
     <div className="fin-acc" onClick={() => onOpen(a.id)}>
-      <div className="emo" style={{ background: 'var(--tk-card-2)', color: a.color }}>{a.emoji}</div>
+      <div className="emo" style={{ background: 'var(--tk-card-2)', color: ACCENT }}>{a.emoji}</div>
       <div className="mid">
         <div className="nm">{a.name}</div>
         <div className="sub"><span>{typeLabel(a.type)}</span>{dep && dep.currentRate != null && <span className="fin-chip rate">{dep.currentRate}%</span>}</div>
@@ -544,7 +545,7 @@ function DetailView({ acc, txns, today, catInfo, accountName, onBack, onEdit, on
     <>
       <button className="tk-back" onClick={onBack}><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/></svg>Назад</button>
       <div className="tk-detail-hero">
-        <div className="tk-emoji" style={{ background: 'var(--tk-card-2)', color: acc.color }}>{acc.emoji}</div>
+        <div className="tk-emoji" style={{ background: 'var(--tk-card-2)', color: ACCENT }}>{acc.emoji}</div>
         <div><h1>{acc.name}</h1><div className="tk-sub">{typeLabel(acc.type)} · {acc.currency}</div></div>
       </div>
 
@@ -987,7 +988,7 @@ function AccountSheet({ editing, today, onClose, onSave, onDelete }: {
   const [type, setType] = useState<Account['type']>(editing?.type ?? 'cash')
   const [currency, setCurrency] = useState(editing?.currency ?? '₸')
   const [emoji, setEmoji] = useState(editing?.emoji ?? '💵')
-  const [color, setColor] = useState(editing?.color ?? COLORS[0])
+  const color = editing?.color ?? ACCENT
   const [balanceStr, setBalanceStr] = useState(editing ? String(editing.balance) : '')
   const [principalStr, setPrincipalStr] = useState(editing ? String(editing.principal) : '')
   const [startDate, setStartDate] = useState(editing?.startDate ?? today)
@@ -1050,7 +1051,6 @@ function AccountSheet({ editing, today, onClose, onSave, onDelete }: {
         )}
 
         <div className="tk-field"><label>Иконка</label><div className="tk-emoji-picker">{EMOJIS.map(e => <button key={e} type="button" className={`tk-emoji-opt ${e === emoji ? 'tk-sel' : ''}`} onClick={() => setEmoji(e)}>{e}</button>)}</div></div>
-        <div className="tk-field"><label>Цвет</label><div className="tk-color-row">{COLORS.map(c => <button key={c} type="button" className={`tk-color-dot ${c === color ? 'tk-sel' : ''}`} style={{ background: c }} onClick={() => setColor(c)} />)}</div></div>
 
         <div className="tk-sheet-actions">
           <button className="tk-btn-primary" onClick={submit} disabled={submitting} style={{ opacity: submitting ? .6 : 1 }}>
@@ -1076,10 +1076,29 @@ function RatesSheet({ settings, onClose, onSave }: { settings: FinanceSettings; 
     return o
   })
   const others = CURRENCIES.filter(c => c !== base)
+  const [fetching, setFetching] = useState(false)
+  const [fetchErr, setFetchErr] = useState('')
   const submit = () => {
     const out: Record<string, number> = {}
     for (const c of others) { const v = Number(String(rates[c] ?? '').replace(',', '.')); if (v > 0) out[c] = v }
     onSave(base, out)
+  }
+  const autoFetch = async () => {
+    setFetching(true); setFetchErr('')
+    try {
+      const res = await fetch(`/api/finance/rates/fetch?base=${encodeURIComponent(base)}`)
+      const data = await res.json()
+      if (!res.ok) { setFetchErr(data.error === 'unsupported base currency' ? 'Эта валюта не поддерживается' : 'Не удалось получить курсы — попробуй позже'); return }
+      setRates(prev => {
+        const next = { ...prev }
+        for (const [c, v] of Object.entries<number>(data.rates)) next[c] = String(v)
+        return next
+      })
+    } catch {
+      setFetchErr('Нет сети — не удалось получить курсы')
+    } finally {
+      setFetching(false)
+    }
   }
   return (
     <div className="tk-sheet">
@@ -1087,8 +1106,14 @@ function RatesSheet({ settings, onClose, onSave }: { settings: FinanceSettings; 
       <div className="tk-sheet-card">
         <div className="tk-sheet-grab" />
         <h2>Курсы валют</h2>
-        <p className="tk-hint">Выбери основную валюту и укажи, сколько она стоит для остальных. Общий итог со всех счетов посчитается по этим курсам.</p>
+        <p className="tk-hint">Одни курсы на все твои кабинеты. Выбери основную валюту и укажи, сколько она стоит для остальных — или обнови автоматически.</p>
         <div className="tk-field"><label>Основная валюта</label><div className="tk-seg">{CURRENCIES.map(c => <button key={c} type="button" className={base === c ? 'tk-sel' : ''} onClick={() => setBase(c)}>{c}</button>)}</div></div>
+
+        <button type="button" onClick={autoFetch} disabled={fetching} className="tk-btn-ghost" style={{ marginBottom: 18, opacity: fetching ? .6 : 1 }}>
+          {fetching ? 'Обновляем…' : '🔄 Обновить курсы автоматически'}
+        </button>
+        {fetchErr && <p className="tk-hint" style={{ color: 'var(--tk-danger)', marginTop: -12 }}>{fetchErr}</p>}
+
         {others.map(c => (
           <div className="tk-field" key={c}><label>1 {c} = сколько {base}?</label><input className="tk-input" inputMode="decimal" placeholder="Например: 5.4" value={rates[c] ?? ''} onChange={e => setRates(prev => ({ ...prev, [c]: e.target.value }))} /></div>
         ))}

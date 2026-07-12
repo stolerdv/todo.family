@@ -257,29 +257,28 @@ export async function deleteRate(rateId: string, userId: string): Promise<void> 
     WHERE r.id = ${rateId} AND r.account_id = a.id AND m.space_id = a.space_id AND m.user_id = ${userId}`
 }
 
-// ── Настройки кабинета (базовая валюта + курсы) ──────────────────────────────────
+// ── Курсы валют (глобальные — одни на все кабинеты пользователя) ─────────────────
+// Раньше были per-kabinet (finance_space_settings); курс валюты — объективный
+// факт, а не мнение кабинета, так что держать его разным для «Личного» и
+// «Бизнеса» не имело смысла. Теперь одна строка finance_global_rates на всех.
 
 export interface FinanceSettings {
   baseCurrency: string
   rates: Record<string, number>   // 1 единица валюты = X базовой
 }
 
-export async function getSettings(spaceId: string, userId: string): Promise<FinanceSettings> {
-  const rows = await sql()`
-    SELECT s.base_currency, s.rates FROM finance_space_settings s
-    JOIN finance_space_members m ON m.space_id = s.space_id AND m.user_id = ${userId}
-    WHERE s.space_id = ${spaceId} LIMIT 1`
+export async function getSettings(userId: string): Promise<FinanceSettings> {
+  const rows = await sql()`SELECT base_currency, rates FROM finance_global_rates WHERE id = 'global' LIMIT 1`
   if (!rows[0]) return { baseCurrency: '', rates: {} }
   const r = rows[0]
   return { baseCurrency: r.base_currency ?? '', rates: (typeof r.rates === 'string' ? JSON.parse(r.rates) : r.rates) ?? {} }
 }
 
-export async function saveSettings(spaceId: string, userId: string, baseCurrency: string, rates: Record<string, number>): Promise<void> {
-  if (!(await isMember(spaceId, userId))) throw new Error('not found')
+export async function saveSettings(userId: string, baseCurrency: string, rates: Record<string, number>): Promise<void> {
   await sql()`
-    INSERT INTO finance_space_settings (space_id, base_currency, rates)
-    VALUES (${spaceId}, ${baseCurrency}, ${JSON.stringify(rates)}::jsonb)
-    ON CONFLICT (space_id) DO UPDATE SET base_currency = EXCLUDED.base_currency, rates = EXCLUDED.rates, updated_at = now()`
+    INSERT INTO finance_global_rates (id, base_currency, rates, updated_at)
+    VALUES ('global', ${baseCurrency}, ${JSON.stringify(rates)}::jsonb, now())
+    ON CONFLICT (id) DO UPDATE SET base_currency = EXCLUDED.base_currency, rates = EXCLUDED.rates, updated_at = now()`
 }
 
 // ── Транзакции ──────────────────────────────────────────────────────────────────

@@ -44,6 +44,7 @@ export default function RegisterPage() {
       <form onSubmit={handleSubmit}
         className="relative w-full max-w-sm flex flex-col gap-4 rounded-3xl p-8 border border-white/[0.08]"
         style={{ background: 'linear-gradient(160deg, #141416, #0a0a0b)', boxShadow: '0 30px 80px -20px rgba(0,0,0,.8)' }}>
+        <img src="/icon-192.png" alt="Pen" className="w-14 h-14 mx-auto mb-1 rounded-[16px]" style={{ boxShadow: '0 8px 24px -8px rgba(255,122,26,.5)' }} />
         <h1 className="text-xl font-bold text-center text-white mb-1">Создать аккаунт</h1>
         <input
           ref={usernameRef}

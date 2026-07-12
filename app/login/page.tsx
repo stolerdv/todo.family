@@ -48,6 +48,7 @@ function LoginForm() {
         className="relative w-full max-w-sm flex flex-col gap-4 rounded-3xl p-8 border border-white/[0.08]"
         style={{ background: 'linear-gradient(160deg, #141416, #0a0a0b)', boxShadow: '0 30px 80px -20px rgba(0,0,0,.8)' }}>
         <div className="text-center mb-2">
+          <img src="/icon-192.png" alt="Pen" className="w-14 h-14 mx-auto mb-3 rounded-[16px]" style={{ boxShadow: '0 8px 24px -8px rgba(255,122,26,.5)' }} />
           <h1 className="text-3xl font-bold tracking-[0.35em] pl-[0.35em] text-white">Pen</h1>
           <p className="text-[11px] text-[#ff7a1a]/80 tracking-[0.25em] uppercase mt-1.5">Организация жизни</p>
         </div>
