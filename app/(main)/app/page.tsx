@@ -256,6 +256,12 @@ export default function AppPage() {
     await fetch(`/api/events/${id}`, { method: 'DELETE' })
   }
 
+  async function editEvent(id: string, data: { day: string; time: string; endTime: string; title: string; note: string }) {
+    if (!data.title.trim()) return
+    setEvents(prev => prev.map(e => e.id === id ? { ...e, ...data } : e))
+    await fetch(`/api/events/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+  }
+
   const sectionTasks = isPriorityView
     ? tasks.filter(t => !DONE_STATES.includes(t.state) && activeSections.some(s => s.id === t.sectionId))
         .sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority] || (a.dueDate || 'z').localeCompare(b.dueDate || 'z'))
@@ -859,6 +865,7 @@ export default function AppPage() {
               events={events}
               onAddEvent={addEvent}
               onDeleteEvent={removeEvent}
+              onEditEvent={editEvent}
             />
           </>
         ) : activeSection ? mainContent : (

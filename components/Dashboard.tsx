@@ -30,12 +30,14 @@ interface Props {
   onTaskClick: (taskId: string, sectionId: string) => void
   onAddEvent: (draft: EventDraft) => void
   onDeleteEvent: (id: string) => void
+  onEditEvent: (id: string, draft: EventDraft) => void
 }
 
-export default function Dashboard({ tasks, sections, subtasks, events, onTaskClick, onAddEvent, onDeleteEvent }: Props) {
+export default function Dashboard({ tasks, sections, subtasks, events, onTaskClick, onAddEvent, onDeleteEvent, onEditEvent }: Props) {
   const [currentDate, setCurrentDate] = useState(new Date())
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
   const [sheetDay, setSheetDay] = useState<string | null>(null) // открытая шторка добавления события
+  const [editingEvent, setEditingEvent] = useState<CalEvent | null>(null) // открытая шторка редактирования
 
   const eventsByDay = useMemo(() => {
     const map: Record<string, CalEvent[]> = {}
@@ -195,12 +197,14 @@ export default function Dashboard({ tasks, sections, subtasks, events, onTaskCli
               <div className="space-y-1.5 max-h-56 overflow-y-auto mb-3">
                 {selectedDayEvents.length === 0 && <p className="text-sm text-gray-600 py-1">Свободно — событий нет.</p>}
                 {selectedDayEvents.map(ev => (
-                  <div key={ev.id} className="group flex items-center gap-2.5 bg-white/[0.03] border border-white/[0.07] rounded-xl px-3 py-2.5">
-                    <span className="text-xs font-bold text-accent-400 tabular-nums w-11 shrink-0">{ev.time || 'весь день'}</span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-gray-200 truncate">{ev.title}</p>
-                      {(ev.endTime || ev.note) && <p className="text-xs text-gray-500 truncate">{ev.endTime ? `до ${ev.endTime}` : ''}{ev.endTime && ev.note ? ' · ' : ''}{ev.note}</p>}
-                    </div>
+                  <div key={ev.id} className="group flex items-center gap-2.5 bg-white/[0.03] border border-white/[0.07] rounded-xl px-3 py-2.5 transition hover:border-white/[0.14]">
+                    <button onClick={() => setEditingEvent(ev)} className="flex-1 min-w-0 flex items-center gap-2.5 text-left">
+                      <span className="text-xs font-bold text-accent-400 tabular-nums w-11 shrink-0">{ev.time || 'весь день'}</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-gray-200 truncate">{ev.title}</p>
+                        {(ev.endTime || ev.note) && <p className="text-xs text-gray-500 truncate">{ev.endTime ? `до ${ev.endTime}` : ''}{ev.endTime && ev.note ? ' · ' : ''}{ev.note}</p>}
+                      </div>
+                    </button>
                     <button onClick={() => onDeleteEvent(ev.id)} className="text-gray-600 hover:text-red-400 text-sm px-1 transition shrink-0" aria-label="Удалить">✕</button>
                   </div>
                 ))}
@@ -272,17 +276,30 @@ export default function Dashboard({ tasks, sections, subtasks, events, onTaskCli
           onSave={draft => { onAddEvent(draft); setSheetDay(null) }}
         />
       )}
+
+      {editingEvent && (
+        <EventSheet
+          day={editingEvent.day}
+          editing={editingEvent}
+          onClose={() => setEditingEvent(null)}
+          onSave={draft => { onEditEvent(editingEvent.id, draft); setEditingEvent(null) }}
+          onDelete={() => { onDeleteEvent(editingEvent.id); setEditingEvent(null) }}
+        />
+      )}
     </div>
   )
 }
 
-// ── Шторка добавления события (время, название, заметка) ─────────────────────────
-function EventSheet({ day, onClose, onSave }: { day: string; onClose: () => void; onSave: (d: EventDraft) => void }) {
-  const [title, setTitle] = useState('')
-  const [allDay, setAllDay] = useState(false)
-  const [time, setTime] = useState('12:00')
-  const [endTime, setEndTime] = useState('')
-  const [note, setNote] = useState('')
+// ── Шторка события: добавление (editing не передан) или редактирование ───────────
+function EventSheet({ day, editing, onClose, onSave, onDelete }: {
+  day: string; editing?: CalEvent; onClose: () => void; onSave: (d: EventDraft) => void; onDelete?: () => void
+}) {
+  const [title, setTitle] = useState(editing?.title ?? '')
+  const [allDay, setAllDay] = useState(editing ? !editing.time : false)
+  const [time, setTime] = useState(editing?.time || '12:00')
+  const [endTime, setEndTime] = useState(editing?.endTime ?? '')
+  const [note, setNote] = useState(editing?.note ?? '')
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   const dayLabel = new Date(day + 'T12:00').toLocaleDateString('ru', { weekday: 'long', day: 'numeric', month: 'long' })
   const canSave = title.trim().length > 0
@@ -298,7 +315,7 @@ function EventSheet({ day, onClose, onSave }: { day: string; onClose: () => void
       <div className="relative w-full max-w-md rounded-t-3xl md:rounded-3xl border border-white/10 p-6 pb-8"
         style={{ background: 'linear-gradient(160deg, #161618, #0b0b0c)', boxShadow: '0 -20px 60px -20px rgba(0,0,0,.8)', animation: 'slideUp .3s cubic-bezier(.2,.9,.3,1)' }}>
         <div className="w-10 h-1 rounded-full bg-white/15 mx-auto mb-5 md:hidden" />
-        <h2 className="text-lg font-bold text-white mb-0.5">Новое событие</h2>
+        <h2 className="text-lg font-bold text-white mb-0.5">{editing ? 'Изменить событие' : 'Новое событие'}</h2>
         <p className="text-xs text-accent-400/80 capitalize mb-5">{dayLabel}</p>
 
         <label className="block text-xs font-semibold text-gray-400 mb-1.5">Название</label>
@@ -340,6 +357,13 @@ function EventSheet({ day, onClose, onSave }: { day: string; onClose: () => void
             className="flex-1 bg-accent-600 hover:bg-accent-500 text-[#120a00] font-bold py-3 rounded-xl transition active:scale-[.98] disabled:opacity-40"
             style={{ boxShadow: canSave ? '0 10px 30px -8px rgba(255,122,26,.5)' : 'none' }}>Сохранить</button>
         </div>
+
+        {editing && onDelete && (
+          <button onClick={() => confirmDelete ? onDelete() : setConfirmDelete(true)}
+            className={`w-full mt-3 text-sm font-medium py-2.5 rounded-xl transition ${confirmDelete ? 'bg-red-500/15 text-red-400 border border-red-500/30' : 'text-gray-500 hover:text-red-400'}`}>
+            {confirmDelete ? 'Точно удалить? Нажми ещё раз' : 'Удалить событие'}
+          </button>
+        )}
       </div>
     </div>
   )
