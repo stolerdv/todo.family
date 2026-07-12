@@ -84,6 +84,22 @@ export function convert(amount: number, from: string, settings: FinanceSettings)
   return amount * r
 }
 
+// Пересчитывает settings так, чтобы «базовой» стала другая валюта — для display-only
+// переключателя валюты сверху (не меняет реальную сохранённую baseCurrency: бюджеты и
+// «Свободно на месяц» хранятся в НАСТОЯЩЕЙ базовой валюте, менять её было бы разрушительно).
+// rates остаются «1 единица валюты = X настоящей базовой», тут пересчитываем в «1 единица = X newBase».
+export function rebase(settings: FinanceSettings, newBase: string): FinanceSettings {
+  if (!newBase || newBase === settings.baseCurrency) return settings
+  const toNewBase = settings.rates?.[newBase]
+  if (!toNewBase || toNewBase <= 0) return { baseCurrency: newBase, rates: {} }
+  const rates: Record<string, number> = { [settings.baseCurrency]: 1 / toNewBase }
+  for (const [cur, r] of Object.entries(settings.rates ?? {})) {
+    if (cur === newBase) continue
+    rates[cur] = r / toNewBase
+  }
+  return { baseCurrency: newBase, rates }
+}
+
 export function combinedTotal(accounts: Account[], today: string, settings: FinanceSettings): { total: number; missing: string[] } {
   let total = 0
   const missing = new Set<string>()

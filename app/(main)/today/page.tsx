@@ -5,7 +5,8 @@ import type { Task, Section, CalEvent } from '@/lib/db'
 import type { Habit } from '@/lib/tracker'
 import type { Account, FinanceSettings, Budget, Credit } from '@/lib/finance'
 import { Dates, Stats, toCalc } from '@/lib/trackerStats'
-import { combinedTotal, categorySpend, formatMoney, currenciesInUse } from '@/lib/financeCalc'
+import { categorySpend, currenciesInUse, convert } from '@/lib/financeCalc'
+import { fmt, isMoneyHidden, setMoneyHidden, loadMoneyHidden } from '@/lib/hideMoney'
 import VoiceAssistant from '@/components/VoiceAssistant'
 
 const DONE_STATES = ['Done', 'Cancelled']
@@ -16,17 +17,25 @@ export default function TodayPage() {
   const [sections, setSections] = useState<Section[]>([])
   const [events, setEvents] = useState<CalEvent[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
+  const [finSpaceId, setFinSpaceId] = useState<string | null>(null)
   const [finSettings, setFinSettings] = useState<FinanceSettings>({ baseCurrency: '', rates: {} })
   const [finCategories, setFinCategories] = useState<{ id: string; name: string; emoji: string }[]>([])
   const [budgets, setBudgets] = useState<Budget[]>([])
   const [credits, setCredits] = useState<Credit[]>([])
   const [txns, setTxns] = useState<any[]>([])
+  const [freeBudget, setFreeBudget] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [quickAdd, setQuickAdd] = useState<null | 'task' | 'event'>(null)
   const [toast, setToast] = useState<string | null>(null)
+  const [, forceHideRerender] = useState(0)
+  const [editingBudget, setEditingBudget] = useState(false)
 
   const today = useMemo(() => Dates.todayKey(), [])
   const showToast = useCallback((m: string) => { setToast(m); setTimeout(() => setToast(null), 2200) }, [])
+
+  // подхватываем сохранённый выбор «скрыть деньги» после гидратации (см. lib/hideMoney.ts)
+  useEffect(() => { loadMoneyHidden(); forceHideRerender(n => n + 1) }, [])
+  const toggleHideMoney = useCallback(() => { setMoneyHidden(!isMoneyHidden()); forceHideRerender(n => n + 1) }, [])
 
   useEffect(() => {
     (async () => {
@@ -45,15 +54,17 @@ export default function TodayPage() {
       const spaces: { id: string }[] = Array.isArray(sp) ? sp : []
       const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('fin_space') : null
       const spaceId = spaces.find(x => x.id === saved)?.id ?? spaces[0]?.id ?? null
+      setFinSpaceId(spaceId)
       if (spaceId) {
         const qs = `?spaceId=${spaceId}`
-        const [acc, settings, cats, buds, crs, tx] = await Promise.all([
+        const [acc, settings, cats, buds, crs, tx, fb] = await Promise.all([
           fetch(`/api/finance/accounts${qs}`).then(r => r.json()),
           fetch('/api/finance/settings').then(r => r.json()),
           fetch(`/api/finance/categories${qs}`).then(r => r.json()),
           fetch(`/api/finance/budgets${qs}`).then(r => r.json()),
           fetch(`/api/finance/credits${qs}`).then(r => r.json()),
           fetch(`/api/finance/txns${qs}`).then(r => r.json()),
+          fetch(`/api/finance/free-budget${qs}`).then(r => r.json()),
         ])
         setAccounts(Array.isArray(acc) ? acc : [])
         setFinSettings(settings && typeof settings === 'object' ? settings : { baseCurrency: '', rates: {} })
@@ -61,10 +72,17 @@ export default function TodayPage() {
         setBudgets(Array.isArray(buds) ? buds : [])
         setCredits(Array.isArray(crs) ? crs : [])
         setTxns(Array.isArray(tx) ? tx : [])
+        setFreeBudget(fb && typeof fb.amount === 'number' ? fb.amount : null)
       }
       setLoading(false)
     })()
   }, [])
+
+  const saveFreeBudget = useCallback(async (amount: number | null) => {
+    setFreeBudget(amount)
+    if (!finSpaceId) return
+    await fetch('/api/finance/free-budget', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spaceId: finSpaceId, amount }) })
+  }, [finSpaceId])
 
   const toggleHabit = useCallback(async (h: Habit) => {
     const target = h.targetPerDay || 1
@@ -112,7 +130,7 @@ export default function TodayPage() {
       const delta = c.direction === 'owe' ? -amount : amount
       setAccounts(prev => prev.map(a => a.id === acc.id ? { ...a, balance: a.balance + delta } : a))
     }
-    showToast(credit.archived ? 'Оплачено полностью 🎉' : `Оплачено ${formatMoney(amount, c.currency)}`)
+    showToast(credit.archived ? 'Оплачено полностью 🎉' : `Оплачено ${fmt(amount, c.currency)}`)
   }, [accounts, showToast])
 
   const dueHabits = useMemo(
@@ -163,7 +181,19 @@ export default function TodayPage() {
   const effSettings = useMemo<FinanceSettings>(() => ({
     baseCurrency: finSettings.baseCurrency || currenciesInUse(spendable)[0] || '', rates: finSettings.rates,
   }), [finSettings, spendable])
-  const freeMoney = useMemo(() => combinedTotal(spendable, today, effSettings), [spendable, today, effSettings])
+  // сколько потрачено с начала месяца (по всем категориям, в базовой валюте) —
+  // на это опирается «Свободно», если задан плановый бюджет на месяц
+  const spentThisMonth = useMemo(() => {
+    const monthKey = today.slice(0, 7)
+    let sum = 0
+    for (const t of txns) {
+      if (t.type !== 'expense' || !t.day?.startsWith(monthKey)) continue
+      const acc = accounts.find(a => a.id === t.accountId)
+      const conv = convert(t.amount, acc?.currency ?? effSettings.baseCurrency, effSettings)
+      if (conv != null) sum += conv
+    }
+    return sum
+  }, [txns, accounts, effSettings, today])
   const overBudget = useMemo(() => {
     return budgets
       .map(b => ({ b, c: finCategories.find(c => c.id === b.categoryId) }))
@@ -232,10 +262,45 @@ export default function TodayPage() {
 
       {spendable.length > 0 && (
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3.5">
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-gray-500">Свободно</span>
-            <span className="text-base font-bold text-white">≈ {formatMoney(freeMoney.total, effSettings.baseCurrency)}</span>
+          <div className="flex items-center justify-between mb-0.5">
+            <span className="text-xs text-gray-500">Свободно на месяц</span>
+            <button onClick={toggleHideMoney} aria-label={isMoneyHidden() ? 'Показать деньги' : 'Скрыть деньги'} className="text-gray-500 text-base leading-none">
+              {isMoneyHidden() ? '🙈' : '👁'}
+            </button>
           </div>
+          {freeBudget == null ? (
+            editingBudget ? (
+              <BudgetEditor
+                base={effSettings.baseCurrency}
+                onCancel={() => setEditingBudget(false)}
+                onSave={v => { saveFreeBudget(v); setEditingBudget(false) }}
+              />
+            ) : (
+              <button onClick={() => setEditingBudget(true)} className="text-sm font-semibold text-accent-400 mt-1">
+                + Задать бюджет на месяц
+              </button>
+            )
+          ) : editingBudget ? (
+            <BudgetEditor
+              base={effSettings.baseCurrency} initial={freeBudget}
+              onCancel={() => setEditingBudget(false)}
+              onSave={v => { saveFreeBudget(v); setEditingBudget(false) }}
+            />
+          ) : (
+            <>
+              <div className="flex items-end justify-between">
+                <span className="text-xl font-bold text-white">{fmt(Math.max(0, freeBudget - spentThisMonth), effSettings.baseCurrency)}</span>
+                <button onClick={() => setEditingBudget(true)} className="text-xs text-gray-500 underline underline-offset-2 mb-1">изменить</button>
+              </div>
+              <div className="h-1.5 rounded-full bg-white/[0.06] mt-2 overflow-hidden">
+                <div className="h-full rounded-full" style={{
+                  width: `${Math.min(100, Math.round(spentThisMonth / freeBudget * 100))}%`,
+                  background: spentThisMonth > freeBudget ? '#ff5a5a' : '#ff7a1a',
+                }} />
+              </div>
+              <p className="text-xs text-gray-600 mt-1.5">потрачено {fmt(spentThisMonth, effSettings.baseCurrency)} из {fmt(freeBudget, effSettings.baseCurrency)}</p>
+            </>
+          )}
           {overBudget.length > 0 && (
             <p className="text-xs text-red-400 mt-1.5">
               Превышен бюджет: {overBudget.map(x => x.c.name).join(', ')}
@@ -276,7 +341,7 @@ export default function TodayPage() {
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-gray-200 truncate">{c.name}</p>
                   <p className={`text-xs mt-0.5 ${c.nextPaymentDate! < today ? 'text-red-400' : 'text-gray-500'}`}>
-                    {formatMoney(c.monthlyPayment!, c.currency)}{c.nextPaymentDate! < today ? ' · просрочен' : ' · сегодня'}
+                    {fmt(c.monthlyPayment!, c.currency)}{c.nextPaymentDate! < today ? ' · просрочен' : ' · сегодня'}
                   </p>
                 </div>
                 <button onClick={() => payCreditQuick(c)}
@@ -347,6 +412,29 @@ export default function TodayPage() {
           {toast}
         </div>
       )}
+    </div>
+  )
+}
+
+function parseNum(s: string): number {
+  const n = Number(String(s).replace(/\s/g, '').replace(',', '.'))
+  return isNaN(n) ? 0 : n
+}
+
+function BudgetEditor({ base, initial, onSave, onCancel }: { base: string; initial?: number; onSave: (v: number) => void; onCancel: () => void }) {
+  const [value, setValue] = useState(initial != null ? String(initial) : '')
+  const canSave = parseNum(value) > 0
+  return (
+    <div className="mt-1">
+      <div className="flex gap-2">
+        <input autoFocus inputMode="decimal" value={value} onChange={e => setValue(e.target.value)}
+          placeholder={`Например: 150000 ${base}`}
+          onKeyDown={e => { if (e.key === 'Enter' && canSave) onSave(parseNum(value)) }}
+          className="flex-1 bg-white/[0.05] border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-600 outline-none focus:border-accent-500" />
+        <button onClick={() => canSave && onSave(parseNum(value))} disabled={!canSave}
+          className="px-4 rounded-xl bg-accent-600 text-[#120a00] text-sm font-bold disabled:opacity-40">ОК</button>
+      </div>
+      <button onClick={onCancel} className="text-xs text-gray-600 mt-1.5">Отмена</button>
     </div>
   )
 }

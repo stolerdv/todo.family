@@ -4,9 +4,10 @@ import { useState, useEffect, useMemo, useCallback, type CSSProperties } from 'r
 import type { Account, DepositRate, Txn, TxnType, FinanceSettings, Category, Budget, Space, Credit, CreditKind, CreditDirection, CreditPayment } from '@/lib/finance'
 import { Dates } from '@/lib/trackerStats'
 import {
-  accountValue, depositValue, effectiveRate, formatMoney, combinedTotal, currenciesInUse, convert,
+  accountValue, depositValue, effectiveRate, combinedTotal, currenciesInUse, convert, rebase,
   categorySpend, categoryMeta, ACCOUNT_TYPES, typeLabel,
 } from '@/lib/financeCalc'
+import { fmt, isMoneyHidden, setMoneyHidden, loadMoneyHidden } from '@/lib/hideMoney'
 import '../tracker/tracker.css'
 import './finance.css'
 
@@ -41,8 +42,13 @@ export default function FinancePage() {
   const [editingCredit, setEditingCredit] = useState<Credit | null>(null)
   const [payingCredit, setPayingCredit] = useState<Credit | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  const [, forceHideRerender] = useState(0)
 
   const today = useMemo(() => Dates.todayKey(), [])
+
+  // подхватываем сохранённый выбор «скрыть деньги» после гидратации (см. lib/hideMoney.ts)
+  useEffect(() => { loadMoneyHidden(); forceHideRerender(n => n + 1) }, [])
+  const toggleHideMoney = useCallback(() => { setMoneyHidden(!isMoneyHidden()); forceHideRerender(n => n + 1) }, [])
 
   const loadData = useCallback(async (sid: string) => {
     const qs = `?spaceId=${sid}`
@@ -198,7 +204,7 @@ export default function FinancePage() {
     const principal = Math.round((acc.principal + interest) * 100) / 100
     patchAccount(acc.id, { principal, startDate: today })
     await fetch(`/api/finance/accounts/${acc.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ principal, startDate: today }) })
-    showToast(`+${formatMoney(interest, acc.currency)} процентов 📈`)
+    showToast(`+${fmt(interest, acc.currency)} процентов 📈`)
   }, [today, showToast])
 
   const addRate = useCallback(async (acc: Account, fromDate: string, rate: number) => {
@@ -282,6 +288,11 @@ export default function FinancePage() {
     await fetch(`/api/finance/categories/${id}`, { method: 'DELETE' })
   }, [])
 
+  const editCategory = useCallback(async (id: string, name: string, emoji: string) => {
+    setCategories(prev => prev.map(c => c.id === id ? { ...c, name, emoji } : c))
+    await fetch(`/api/finance/categories/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, emoji }) })
+  }, [])
+
   const setBudget = useCallback(async (categoryId: string, amount: number) => {
     setBudgets(prev => {
       const rest = prev.filter(b => b.categoryId !== categoryId)
@@ -360,6 +371,7 @@ export default function FinancePage() {
               onOpenCredits={() => setView({ name: 'credits' })}
               onSettings={() => setModal('menu')}
               onDeleteOp={deleteOp} onEditOp={setEditingOp}
+              moneyHidden={isMoneyHidden()} onToggleHideMoney={toggleHideMoney}
             />
           )}
           {view.name === 'detail' && detailAcc && (
@@ -413,7 +425,7 @@ export default function FinancePage() {
         />
       )}
       {modal === 'rates' && <RatesSheet settings={settings} onClose={() => setModal('menu')} onSave={saveSettings} />}
-      {modal === 'cats' && <CategoriesSheet categories={categories} onClose={() => setModal('menu')} onAdd={addCategory} onDelete={deleteCategory} />}
+      {modal === 'cats' && <CategoriesSheet categories={categories} onClose={() => setModal('menu')} onAdd={addCategory} onDelete={deleteCategory} onEdit={editCategory} />}
       {modal === 'budgets' && <BudgetsSheet categories={categories} budgets={budgets} txns={txns} accounts={accounts} settings={settings} today={today} onClose={() => setModal('menu')} onSet={setBudget} />}
       {modal === 'credit' && <CreditSheet editing={editingCredit} today={today} onClose={() => { setModal(null); setEditingCredit(null) }} onSave={saveCredit} onDelete={deleteCreditFn} />}
       {modal === 'credit-pay' && payingCredit && (
@@ -470,13 +482,18 @@ function FinanceSkeleton() {
 }
 
 // ── Список ───────────────────────────────────────────────────────────────────
-function ListView({ active, txns, settings, categories, budgets, accounts, credits, today, catInfo, onOpenAccount, onAddAccount, onOpenCredits, onSettings, onDeleteOp, onEditOp }: {
+function ListView({ active, txns, settings, categories, budgets, accounts, credits, today, catInfo, onOpenAccount, onAddAccount, onOpenCredits, onSettings, onDeleteOp, onEditOp, moneyHidden, onToggleHideMoney }: {
   active: Account[]; txns: Txn[]; settings: FinanceSettings; categories: Category[]; budgets: Budget[]; accounts: Account[]; credits: Credit[]
   today: string; catInfo: (k: string) => { emoji: string; label: string }
   onOpenAccount: (id: string) => void; onAddAccount: () => void; onOpenCredits: () => void; onSettings: () => void; onDeleteOp: (t: Txn) => void; onEditOp: (t: Txn) => void
+  moneyHidden: boolean; onToggleHideMoney: () => void
 }) {
+  const [displayCurrency, setDisplayCurrency] = useState<string | null>(null)
   const gear = (
-    <button onClick={onSettings} aria-label="Настройки" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--tk-muted)', fontSize: 22, padding: 4 }}>⚙</button>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+      <button onClick={onToggleHideMoney} aria-label={moneyHidden ? 'Показать деньги' : 'Скрыть деньги'} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--tk-muted)', fontSize: 20, padding: 4 }}>{moneyHidden ? '🙈' : '👁'}</button>
+      <button onClick={onSettings} aria-label="Настройки" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--tk-muted)', fontSize: 22, padding: 4 }}>⚙</button>
+    </div>
   )
   if (!active.length) {
     return (
@@ -494,8 +511,9 @@ function ListView({ active, txns, settings, categories, budgets, accounts, credi
 
   const currencies = currenciesInUse(active)
   const multi = currencies.length > 1
-  const effBase = settings.baseCurrency || currencies[0]
-  const effSettings: FinanceSettings = { baseCurrency: effBase, rates: settings.rates }
+  const realBase = settings.baseCurrency || currencies[0]
+  const effBase = displayCurrency || realBase
+  const effSettings: FinanceSettings = rebase({ baseCurrency: realBase, rates: settings.rates }, effBase)
   const byCur: Record<string, { total: number; free: number; deposits: number }> = {}
   for (const a of active) {
     const v = accountValue(a, today)
@@ -513,29 +531,30 @@ function ListView({ active, txns, settings, categories, budgets, accounts, credi
         <h1 className="tk-page-title">Финансы</h1>{gear}
       </div>
 
-      {!multi ? (
-        <div className="fin-total-card">
-          <div className="tk-k">Всего денег</div>
-          <div className="fin-big">{formatMoney(byCur[currencies[0]].total, currencies[0])}</div>
-          <div className="fin-total-split">
-            <div><div className="lbl">💵 Свободные</div><div className="amt">{formatMoney(byCur[currencies[0]].free, currencies[0])}</div></div>
-            {byCur[currencies[0]].deposits > 0 && <div><div className="lbl">📈 В депозитах</div><div className="amt">{formatMoney(byCur[currencies[0]].deposits, currencies[0])}</div></div>}
-          </div>
-        </div>
-      ) : (
-        <div className="fin-total-card">
+      <div className="fin-total-card">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
           <div className="tk-k">Всего ≈ (в {effBase})</div>
-          <div className="fin-big">≈ {formatMoney(combined.total, effBase)}</div>
-          {combined.missing.length > 0 && (
-            <div style={{ color: '#ffb454', fontSize: 12.5, fontWeight: 600, marginTop: 6 }}>
-              Нет курса для: {combined.missing.join(', ')} — открой ⚙ → Курсы валют
-            </div>
-          )}
-          <div className="fin-total-split" style={{ flexWrap: 'wrap', gap: 14 }}>
-            {currencies.map(c => <div key={c} style={{ minWidth: 90 }}><div className="lbl">{c}</div><div className="amt">{formatMoney(byCur[c].total, c)}</div></div>)}
+          <div className="tk-seg" style={{ transform: 'scale(0.88)', transformOrigin: 'right center' }}>
+            {CURRENCIES.map(c => <button key={c} type="button" className={effBase === c ? 'tk-sel' : ''} onClick={() => setDisplayCurrency(c === realBase ? null : c)}>{c}</button>)}
           </div>
         </div>
-      )}
+        <div className="fin-big">≈ {fmt(combined.total, effBase)}</div>
+        {combined.missing.length > 0 && (
+          <div style={{ color: '#ffb454', fontSize: 12.5, fontWeight: 600, marginTop: 6 }}>
+            Нет курса для: {combined.missing.join(', ')} — открой ⚙ → Курсы валют
+          </div>
+        )}
+        {!multi && byCur[currencies[0]].deposits > 0 ? (
+          <div className="fin-total-split">
+            <div><div className="lbl">💵 Свободные</div><div className="amt">{fmt(byCur[currencies[0]].free, currencies[0])}</div></div>
+            <div><div className="lbl">📈 В депозитах</div><div className="amt">{fmt(byCur[currencies[0]].deposits, currencies[0])}</div></div>
+          </div>
+        ) : multi && (
+          <div className="fin-total-split" style={{ flexWrap: 'wrap', gap: 14 }}>
+            {currencies.map(c => <div key={c} style={{ minWidth: 90 }}><div className="lbl">{c}</div><div className="amt">{fmt(byCur[c].total, c)}</div></div>)}
+          </div>
+        )}
+      </div>
 
       {activeBudgets.length > 0 && (
         <>
@@ -543,13 +562,14 @@ function ListView({ active, txns, settings, categories, budgets, accounts, credi
           <div className="tk-block">
             {activeBudgets.map(({ b, c }) => {
               const spent = categorySpend(b.categoryId, txns, accounts, effSettings, today)
-              const pct = Math.min(100, Math.round(spent / b.amount * 100))
-              const over = spent > b.amount
+              const limit = convert(b.amount, realBase, effSettings) ?? b.amount
+              const pct = Math.min(100, Math.round(spent / limit * 100))
+              const over = spent > limit
               return (
                 <div key={b.id} style={{ padding: '8px 0' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13.5, marginBottom: 5 }}>
                     <span>{c!.emoji} {c!.name}</span>
-                    <span style={{ color: over ? 'var(--tk-danger)' : 'var(--tk-muted)', fontWeight: 700 }}>{formatMoney(spent, effBase)} / {formatMoney(b.amount, effBase)}</span>
+                    <span style={{ color: over ? 'var(--tk-danger)' : 'var(--tk-muted)', fontWeight: 700 }}>{fmt(spent, effBase)} / {fmt(limit, effBase)}</span>
                   </div>
                   <div className="tk-mini-track"><div className="tk-mini-fill" style={{ width: pct + '%', background: over ? 'var(--tk-danger)' : 'var(--tk-good)' }} /></div>
                 </div>
@@ -562,10 +582,27 @@ function ListView({ active, txns, settings, categories, budgets, accounts, credi
       {(() => {
         const activeCredits = credits.filter(c => !c.archived)
         if (!activeCredits.length) return null
-        const owe: Record<string, number> = {}
-        const owed: Record<string, number> = {}
-        for (const c of activeCredits) (c.direction === 'owe' ? owe : owed)[c.currency] = ((c.direction === 'owe' ? owe : owed)[c.currency] ?? 0) + c.remaining
-        const duePayments = activeCredits.filter(c => c.monthlyPayment && c.nextPaymentDate && c.nextPaymentDate <= today)
+
+        // «вы должны» / «вам должны» — переводим всё в effBase, чтобы не мешать валюты через « + »
+        let oweSum = 0, owedSum = 0
+        const oweMissing = new Set<string>(), owedMissing = new Set<string>()
+        for (const c of activeCredits) {
+          const conv = convert(c.remaining, c.currency, effSettings)
+          if (c.direction === 'owe') { if (conv === null) oweMissing.add(c.currency); else oweSum += conv }
+          else { if (conv === null) owedMissing.add(c.currency); else owedSum += conv }
+        }
+
+        // платежи, которые нужно внести в текущем месяце (включая просроченные с прошлых месяцев)
+        const withMonthly = activeCredits.filter(c => c.monthlyPayment != null)
+        const monthKey = today.slice(0, 7)
+        const duePayments = withMonthly.filter(c => c.nextPaymentDate && c.nextPaymentDate.slice(0, 7) <= monthKey)
+        let monthSum = 0
+        const monthMissing = new Set<string>()
+        for (const c of duePayments) {
+          const conv = convert(c.monthlyPayment!, c.currency, effSettings)
+          if (conv === null) monthMissing.add(c.currency); else monthSum += conv
+        }
+
         return (
           <>
             <div className="tk-section-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -573,17 +610,24 @@ function ListView({ active, txns, settings, categories, budgets, accounts, credi
               <button onClick={onOpenCredits} style={{ background: 'none', border: 'none', color: 'var(--tk-accent)', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>Все →</button>
             </div>
             <div className="tk-block" style={{ padding: '10px 16px' }}>
-              {Object.keys(owe).length > 0 && (
-                <div className="fin-kv"><span className="k">Вы должны</span><span className="v" style={{ color: 'var(--tk-danger)' }}>{Object.entries(owe).map(([cur, v]) => formatMoney(v, cur)).join(' + ')}</span></div>
+              {(oweSum > 0 || oweMissing.size > 0) && (
+                <div className="fin-kv"><span className="k">Вы должны</span><span className="v" style={{ color: 'var(--tk-danger)' }}>{fmt(oweSum, effBase)}{oweMissing.size > 0 ? ` (нет курса: ${Array.from(oweMissing).join(', ')})` : ''}</span></div>
               )}
-              {Object.keys(owed).length > 0 && (
-                <div className="fin-kv"><span className="k">Вам должны</span><span className="v" style={{ color: 'var(--tk-good)' }}>{Object.entries(owed).map(([cur, v]) => formatMoney(v, cur)).join(' + ')}</span></div>
+              {(owedSum > 0 || owedMissing.size > 0) && (
+                <div className="fin-kv"><span className="k">Вам должны</span><span className="v" style={{ color: 'var(--tk-good)' }}>{fmt(owedSum, effBase)}{owedMissing.size > 0 ? ` (нет курса: ${Array.from(owedMissing).join(', ')})` : ''}</span></div>
               )}
-              {duePayments.length > 0 && (
-                <p className="tk-hint" style={{ color: '#ffb454', marginTop: 6, marginBottom: 0 }}>
-                  {duePayments.length === 1 ? 'Пора внести платёж: ' : `Пора внести ${duePayments.length} платежа: `}
-                  {duePayments.map(c => c.name).join(', ')}
-                </p>
+              {withMonthly.length > 0 && (
+                duePayments.length > 0 ? (
+                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--tk-line)' }}>
+                    <div className="fin-kv" style={{ marginBottom: 0 }}>
+                      <span className="k">Платежи в этом месяце</span>
+                      <span className="v" style={{ color: '#ffb454' }}>{fmt(monthSum, effBase)}{monthMissing.size > 0 ? ` (нет курса: ${Array.from(monthMissing).join(', ')})` : ''}</span>
+                    </div>
+                    <p className="tk-hint" style={{ marginTop: 4, marginBottom: 0 }}>{duePayments.map(c => c.name).join(', ')}</p>
+                  </div>
+                ) : (
+                  <p className="tk-hint" style={{ color: 'var(--tk-good)', marginTop: 8, marginBottom: 0 }}>Все платежи в этом месяце закрыты 🎉</p>
+                )
               )}
             </div>
           </>
@@ -594,7 +638,7 @@ function ListView({ active, txns, settings, categories, budgets, accounts, credi
         <span>Счета</span>
         <button onClick={onAddAccount} style={{ background: 'none', border: 'none', color: 'var(--tk-accent)', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>+ счёт</button>
       </div>
-      <div className="tk-list">{active.map(a => <AccountRow key={a.id} a={a} today={today} onOpen={onOpenAccount} />)}</div>
+      <div className="tk-list">{active.map(a => <AccountRow key={a.id} a={a} today={today} effBase={effBase} effSettings={effSettings} onOpen={onOpenAccount} />)}</div>
 
       {txns.length > 0 && (
         <>
@@ -608,9 +652,10 @@ function ListView({ active, txns, settings, categories, budgets, accounts, credi
   )
 }
 
-function AccountRow({ a, today, onOpen }: { a: Account; today: string; onOpen: (id: string) => void }) {
+function AccountRow({ a, today, effBase, effSettings, onOpen }: { a: Account; today: string; effBase: string; effSettings: FinanceSettings; onOpen: (id: string) => void }) {
   const val = accountValue(a, today)
   const dep = a.type === 'deposit' ? depositValue(a, today) : null
+  const converted = a.currency !== effBase ? convert(val, a.currency, effSettings) : null
   return (
     <div className="fin-acc" onClick={() => onOpen(a.id)}>
       <div className="emo" style={{ background: 'var(--tk-card-2)', color: ACCENT }}>{a.emoji}</div>
@@ -619,8 +664,9 @@ function AccountRow({ a, today, onOpen }: { a: Account; today: string; onOpen: (
         <div className="sub"><span>{typeLabel(a.type)}</span>{dep && dep.currentRate != null && <span className="fin-chip rate">{dep.currentRate}%</span>}</div>
       </div>
       <div className="right">
-        <div className="val">{formatMoney(val, a.currency)}</div>
-        {dep && dep.interest > 0 && <div className="val-sub">+{formatMoney(dep.interest, a.currency)}</div>}
+        <div className="val">{fmt(val, a.currency)}</div>
+        {converted != null && <div className="val-sub">≈ {fmt(converted, effBase)}</div>}
+        {dep && dep.interest > 0 && <div className="val-sub">+{fmt(dep.interest, a.currency)}</div>}
       </div>
     </div>
   )
@@ -650,7 +696,7 @@ function OpRow({ t, info, fromName, toName, currency, onDelete, onEdit }: {
           {sub}{t.comment ? ` · ${t.comment}` : ''} · {Dates.humanShort(t.day)}{t.authorName ? ` · ${t.authorName}` : ''}
         </div>
       </div>
-      <div style={{ fontWeight: 800, fontSize: 15, color, whiteSpace: 'nowrap' }}>{sign}{formatMoney(t.amount, currency)}</div>
+      <div style={{ fontWeight: 800, fontSize: 15, color, whiteSpace: 'nowrap' }}>{sign}{fmt(t.amount, currency)}</div>
       <button onClick={() => onDelete(t)} aria-label="Удалить" style={{ background: 'none', border: 'none', color: 'var(--tk-faint)', cursor: 'pointer', fontSize: 15, padding: 4 }}>✕</button>
     </div>
   )
@@ -741,8 +787,8 @@ function DetailView({ acc, txns, today, catInfo, accountName, onBack, onEdit, on
 
       <div className="tk-block">
         <div style={{ color: 'var(--tk-muted)', fontSize: 13, fontWeight: 600 }}>{isDeposit ? 'Сейчас на депозите' : 'Баланс'}</div>
-        <div className="fin-hero-amount">{formatMoney(val, acc.currency)}</div>
-        {dep && dep.interest > 0 && <div className="fin-hero-note">+{formatMoney(dep.interest, acc.currency)} процентами</div>}
+        <div className="fin-hero-amount">{fmt(val, acc.currency)}</div>
+        {dep && dep.interest > 0 && <div className="fin-hero-note">+{fmt(dep.interest, acc.currency)} процентами</div>}
         {!isDeposit && (editingBalance ? (
           <div className="fin-add-rate" style={{ marginTop: 14 }}>
             <input className="tk-input" inputMode="decimal" autoFocus value={balanceStr} onChange={e => setBalanceStr(e.target.value)} />
@@ -756,12 +802,12 @@ function DetailView({ acc, txns, today, catInfo, accountName, onBack, onEdit, on
       {isDeposit && (
         <>
           <div className="tk-block">
-            <div className="fin-kv"><span className="k">Тело депозита</span><span className="v">{formatMoney(acc.principal, acc.currency)}</span></div>
+            <div className="fin-kv"><span className="k">Тело депозита</span><span className="v">{fmt(acc.principal, acc.currency)}</span></div>
             <div className="fin-kv"><span className="k">Проценты идут с</span><span className="v">{acc.startDate ? Dates.human(acc.startDate) : '—'}</span></div>
             <div className="fin-kv"><span className="k">Ставка сейчас</span><span className="v" style={{ color: 'var(--tk-good)' }}>{dep?.currentRate != null ? dep.currentRate + '%' : '—'}</span></div>
             <div className="fin-kv"><span className="k">Капитализация</span><span className="v">{acc.capitalization === 'monthly' ? 'ежемесячная' : 'нет'}</span></div>
             {effNow != null && acc.capitalization === 'monthly' && <div className="fin-kv"><span className="k">Эффективно годовых</span><span className="v" style={{ color: 'var(--tk-good)' }}>≈ {effNow.toFixed(1)}%</span></div>}
-            <div className="fin-kv"><span className="k">Набежало (оценка)</span><span className="v" style={{ color: 'var(--tk-good)' }}>+{formatMoney(dep?.interest ?? 0, acc.currency)}</span></div>
+            <div className="fin-kv"><span className="k">Набежало (оценка)</span><span className="v" style={{ color: 'var(--tk-good)' }}>+{fmt(dep?.interest ?? 0, acc.currency)}</span></div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 14 }}>
               {topUpOpen ? (
@@ -773,7 +819,7 @@ function DetailView({ acc, txns, today, catInfo, accountName, onBack, onEdit, on
                 <button className="tk-btn-ghost" onClick={() => setTopUpOpen(true)}>➕ Пополнить депозит</button>
               )}
               {monthInterest > 0 && (
-                <button className="tk-btn-ghost" onClick={() => onAccrue(acc)}>📈 Начислить % за месяц (+{formatMoney(monthInterest, acc.currency)})</button>
+                <button className="tk-btn-ghost" onClick={() => onAccrue(acc)}>📈 Начислить % за месяц (+{fmt(monthInterest, acc.currency)})</button>
               )}
             </div>
             {monthInterest > 0 && <p className="tk-hint" style={{ marginTop: 8 }}>Проценты за месяц = тело × ставка ÷ 12. После начисления «набежало» считается заново с сегодняшнего дня.</p>}
@@ -1094,14 +1140,21 @@ function SpaceSheet({ spaces, spaceId, myId, onClose, onSwitch, onCreate, onRena
 }
 
 // ── Категории ────────────────────────────────────────────────────────────────────
-function CategoriesSheet({ categories, onClose, onAdd, onDelete }: {
+function CategoriesSheet({ categories, onClose, onAdd, onDelete, onEdit }: {
   categories: Category[]; onClose: () => void; onAdd: (kind: 'expense' | 'income', name: string, emoji: string) => void; onDelete: (id: string) => void
+  onEdit: (id: string, name: string, emoji: string) => void
 }) {
   const [kind, setKind] = useState<'expense' | 'income'>('expense')
   const [name, setName] = useState('')
   const [emoji, setEmoji] = useState('🍔')
   const [err, setErr] = useState('')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editEmoji, setEditEmoji] = useState('')
   const list = categories.filter(c => c.kind === kind)
+
+  const startEdit = (c: Category) => { setEditingId(c.id); setEditName(c.name); setEditEmoji(c.emoji) }
+  const saveEdit = () => { if (editName.trim() && editingId) { onEdit(editingId, editName.trim(), editEmoji); setEditingId(null) } }
 
   return (
     <div className="tk-sheet">
@@ -1111,15 +1164,26 @@ function CategoriesSheet({ categories, onClose, onAdd, onDelete }: {
         <h2>Категории</h2>
         <div className="tk-field">
           <div className="tk-seg">
-            <button type="button" className={kind === 'expense' ? 'tk-sel' : ''} onClick={() => setKind('expense')}>Расходы</button>
-            <button type="button" className={kind === 'income' ? 'tk-sel' : ''} onClick={() => setKind('income')}>Доходы</button>
+            <button type="button" className={kind === 'expense' ? 'tk-sel' : ''} onClick={() => { setKind('expense'); setEditingId(null) }}>Расходы</button>
+            <button type="button" className={kind === 'income' ? 'tk-sel' : ''} onClick={() => { setKind('income'); setEditingId(null) }}>Доходы</button>
           </div>
         </div>
 
         <div className="tk-block" style={{ padding: '4px 16px' }}>
-          {list.map(c => (
+          {list.map(c => editingId === c.id ? (
+            <div key={c.id} style={{ padding: '10px 0' }}>
+              <div className="tk-emoji-picker" style={{ marginBottom: 8, maxHeight: 100, overflowY: 'auto' }}>
+                {CAT_EMOJIS.map(e => <button key={e} type="button" className={`tk-emoji-opt ${e === editEmoji ? 'tk-sel' : ''}`} onClick={() => setEditEmoji(e)}>{e}</button>)}
+              </div>
+              <div className="fin-add-rate">
+                <input className="tk-input" value={editName} onChange={e => setEditName(e.target.value)} maxLength={24} autoFocus />
+                <button className="tk-btn-primary" style={{ width: 'auto', padding: '0 14px' }} onClick={saveEdit}>✓</button>
+                <button className="tk-btn-ghost" style={{ width: 'auto', padding: '0 10px' }} onClick={() => setEditingId(null)}>✕</button>
+              </div>
+            </div>
+          ) : (
             <div key={c.id} className="fin-kv">
-              <span style={{ fontSize: 15 }}>{c.emoji} {c.name}</span>
+              <span style={{ fontSize: 15, cursor: 'pointer', flex: 1 }} onClick={() => startEdit(c)}>{c.emoji} {c.name}</span>
               <button onClick={() => onDelete(c.id)} aria-label="Удалить" style={{ background: 'none', border: 'none', color: 'var(--tk-faint)', cursor: 'pointer', fontSize: 15 }}>✕</button>
             </div>
           ))}
@@ -1170,7 +1234,7 @@ function BudgetsSheet({ categories, budgets, txns, accounts, settings, today, on
             const spent = categorySpend(c.id, txns, accounts, effSettings, today)
             return (
               <div key={c.id} className="fin-kv" style={{ gap: 10 }}>
-                <span style={{ flex: 1, fontSize: 14.5 }}>{c.emoji} {c.name}<br /><span style={{ color: 'var(--tk-muted)', fontSize: 11.5 }}>потрачено {formatMoney(spent, base)}</span></span>
+                <span style={{ flex: 1, fontSize: 14.5 }}>{c.emoji} {c.name}<br /><span style={{ color: 'var(--tk-muted)', fontSize: 11.5 }}>потрачено {fmt(spent, base)}</span></span>
                 <input className="tk-input" inputMode="decimal" placeholder="—" style={{ maxWidth: 110, textAlign: 'right' }}
                   value={vals[c.id] ?? ''} onChange={e => setVals(p => ({ ...p, [c.id]: e.target.value }))}
                   onBlur={() => onSet(c.id, parseMoney(vals[c.id] ?? ''))} />
@@ -1448,8 +1512,8 @@ function ReportsSheet({ accounts, txns, categories, settings, today, onClose }: 
         {tab !== 'money' ? (
           <>
             <div style={{ display: 'flex', gap: 14, margin: '2px 2px 14px' }}>
-              <div><div style={{ color: 'var(--tk-muted)', fontSize: 12, fontWeight: 600 }}>Всего за период</div><div style={{ fontSize: 20, fontWeight: 800, color }}>{formatMoney(total, base)}</div></div>
-              <div><div style={{ color: 'var(--tk-muted)', fontSize: 12, fontWeight: 600 }}>В среднем / мес</div><div style={{ fontSize: 20, fontWeight: 800 }}>{formatMoney(avg, base)}</div></div>
+              <div><div style={{ color: 'var(--tk-muted)', fontSize: 12, fontWeight: 600 }}>Всего за период</div><div style={{ fontSize: 20, fontWeight: 800, color }}>{fmt(total, base)}</div></div>
+              <div><div style={{ color: 'var(--tk-muted)', fontSize: 12, fontWeight: 600 }}>В среднем / мес</div><div style={{ fontSize: 20, fontWeight: 800 }}>{fmt(avg, base)}</div></div>
             </div>
             <MonthBars data={data} color={color} base={base} />
           </>
@@ -1477,7 +1541,7 @@ function MonthBars({ data, color, base }: { data: { month: string; value: number
       {cur && (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8, padding: '0 2px' }}>
           <span style={{ color: 'var(--tk-muted)', fontSize: 13, fontWeight: 600, textTransform: 'capitalize' }}>{monthLabelFull(cur.month)}</span>
-          <span style={{ fontSize: 16, fontWeight: 800, color }}>{formatMoney(cur.value, base)}</span>
+          <span style={{ fontSize: 16, fontWeight: 800, color }}>{fmt(cur.value, base)}</span>
         </div>
       )}
       <div style={{ display: 'flex', gap: 6, overflowX: 'auto', alignItems: 'flex-end', paddingBottom: 4 }}>
@@ -1519,7 +1583,7 @@ function MoneyTrend({ data, base }: { data: { month: string; value: number }[]; 
       {cur && (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6, padding: '0 2px' }}>
           <span style={{ color: 'var(--tk-muted)', fontSize: 13, fontWeight: 600, textTransform: 'capitalize' }}>{monthLabelFull(cur.month)}</span>
-          <span style={{ fontSize: 16, fontWeight: 800, color: 'var(--tk-accent)' }}>{formatMoney(cur.value, base)}</span>
+          <span style={{ fontSize: 16, fontWeight: 800, color: 'var(--tk-accent)' }}>{fmt(cur.value, base)}</span>
         </div>
       )}
       <div style={{ overflowX: 'auto', paddingBottom: 4 }}>
@@ -1543,7 +1607,7 @@ function MoneyTrend({ data, base }: { data: { month: string; value: number }[]; 
       </div>
       {data.length > 1 && (
         <div style={{ textAlign: 'center', marginTop: 4, fontSize: 12.5, color: 'var(--tk-muted)' }}>
-          За период: <b style={{ color: change >= 0 ? 'var(--tk-good)' : 'var(--tk-danger)' }}>{change >= 0 ? '+' : '−'}{formatMoney(Math.abs(change), base)}</b>
+          За период: <b style={{ color: change >= 0 ? 'var(--tk-good)' : 'var(--tk-danger)' }}>{change >= 0 ? '+' : '−'}{fmt(Math.abs(change), base)}</b>
         </div>
       )}
     </div>
@@ -1575,7 +1639,7 @@ function CreditRow({ c, today, onOpen }: { c: Credit; today: string; onOpen: (id
         </div>
       </div>
       <div className="right">
-        <div className="val">{formatMoney(c.remaining, c.currency)}</div>
+        <div className="val">{fmt(c.remaining, c.currency)}</div>
         {c.principal > 0 && !c.archived && <div className="val-sub">{pct}% погашено</div>}
       </div>
     </div>
@@ -1640,11 +1704,11 @@ function CreditDetailView({ credit, accounts, today, onBack, onEdit, onClose, on
 
       <div className="tk-block">
         <div style={{ color: 'var(--tk-muted)', fontSize: 13, fontWeight: 600 }}>{credit.direction === 'owe' ? 'Осталось заплатить' : 'Осталось получить'}</div>
-        <div className="fin-hero-amount">{formatMoney(credit.remaining, credit.currency)}</div>
+        <div className="fin-hero-amount">{fmt(credit.remaining, credit.currency)}</div>
         {credit.principal > 0 && (
           <>
             <div className="tk-mini-track" style={{ marginTop: 10 }}><div className="tk-mini-fill" style={{ width: pct + '%', background: 'var(--tk-good)' }} /></div>
-            <p className="tk-hint" style={{ marginTop: 6, marginBottom: 0 }}>{pct}% от {formatMoney(credit.principal, credit.currency)} погашено</p>
+            <p className="tk-hint" style={{ marginTop: 6, marginBottom: 0 }}>{pct}% от {fmt(credit.principal, credit.currency)} погашено</p>
           </>
         )}
         {!credit.archived
@@ -1654,7 +1718,7 @@ function CreditDetailView({ credit, accounts, today, onBack, onEdit, onClose, on
 
       <div className="tk-block">
         {credit.rate != null && <div className="fin-kv"><span className="k">Ставка</span><span className="v">{credit.rate}% годовых</span></div>}
-        {credit.monthlyPayment != null && <div className="fin-kv"><span className="k">Ежемесячный платёж</span><span className="v">{formatMoney(credit.monthlyPayment, credit.currency)}</span></div>}
+        {credit.monthlyPayment != null && <div className="fin-kv"><span className="k">Ежемесячный платёж</span><span className="v">{fmt(credit.monthlyPayment, credit.currency)}</span></div>}
         {credit.nextPaymentDate && <div className="fin-kv"><span className="k">Следующий платёж</span><span className="v" style={{ color: overdue ? 'var(--tk-danger)' : undefined }}>{Dates.human(credit.nextPaymentDate)}{overdue ? ' · просрочен' : ''}</span></div>}
         {credit.startDate && <div className="fin-kv"><span className="k">Открыт</span><span className="v">{Dates.human(credit.startDate)}</span></div>}
         {credit.dueDate && <div className="fin-kv"><span className="k">Срок погашения</span><span className="v">{Dates.human(credit.dueDate)}</span></div>}
@@ -1668,7 +1732,7 @@ function CreditDetailView({ credit, accounts, today, onBack, onEdit, onClose, on
               <div key={p.id} className="fin-kv" style={{ gap: 12 }}>
                 <div style={{ width: 34, height: 34, borderRadius: 9, background: 'var(--tk-card-2)', display: 'grid', placeItems: 'center', fontSize: 17, flex: '0 0 auto' }}>💸</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14.5 }}>{formatMoney(p.amount, credit.currency)}</div>
+                  <div style={{ fontWeight: 600, fontSize: 14.5 }}>{fmt(p.amount, credit.currency)}</div>
                   <div style={{ color: 'var(--tk-muted)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {p.accountId ? accountName(p.accountId) : 'без счёта'}{p.comment ? ` · ${p.comment}` : ''} · {Dates.humanShort(p.day)}{p.authorName ? ` · ${p.authorName}` : ''}
                   </div>
@@ -1721,7 +1785,7 @@ function CreditSheet({ editing, today, onClose, onSave, onDelete }: {
       kind, direction: kind === 'debt' ? direction : 'owe',
       name: name.trim(), counterparty: counterparty.trim(), currency,
       principal,
-      remaining: editing ? (remainingStr.trim() ? parseMoney(remainingStr) : principal) : principal,
+      remaining: remainingStr.trim() ? parseMoney(remainingStr) : principal,
       rate: rateStr.trim() ? parseMoney(rateStr) : null,
       monthlyPayment: monthlyStr.trim() ? parseMoney(monthlyStr) : null,
       startDate: startDate || null, dueDate: dueDate || null,
@@ -1767,13 +1831,13 @@ function CreditSheet({ editing, today, onClose, onSave, onDelete }: {
         </div>
         <div className="tk-field"><label>Валюта</label><div className="tk-seg">{CURRENCIES.map(c => <button key={c} type="button" className={currency === c ? 'tk-sel' : ''} onClick={() => setCurrency(c)}>{c}</button>)}</div></div>
         <div className="tk-field"><label>Сумма ({currency})</label><input className="tk-input" inputMode="decimal" placeholder="500 000" value={principalStr} onChange={e => setPrincipalStr(e.target.value)} /></div>
-        {editing && (
-          <div className="tk-field">
-            <label>Остаток сейчас ({currency})</label>
-            <input className="tk-input" inputMode="decimal" value={remainingStr} onChange={e => setRemainingStr(e.target.value)} />
-            <p className="tk-hint" style={{ marginTop: 6, marginBottom: 0 }}>Меняется автоматически платежами — правь вручную только для исправления ошибки.</p>
-          </div>
-        )}
+        <div className="tk-field">
+          <label>Задолженность на сегодня ({currency})</label>
+          <input className="tk-input" inputMode="decimal" placeholder={principalStr || 'вся сумма'} value={remainingStr} onChange={e => setRemainingStr(e.target.value)} />
+          <p className="tk-hint" style={{ marginTop: 6, marginBottom: 0 }}>
+            {editing ? 'Меняется автоматически платежами — правь вручную только для исправления ошибки.' : 'Если уже что-то оплачено раньше — укажи, сколько осталось. Пусто = вся сумма.'}
+          </p>
+        </div>
         <div className="tk-field"><label>Ставка, % годовых (необязательно)</label><input className="tk-input" inputMode="decimal" placeholder="18" value={rateStr} onChange={e => setRateStr(e.target.value)} /></div>
         <div className="tk-field"><label>Ежемесячный платёж ({currency}, необязательно)</label><input className="tk-input" inputMode="decimal" placeholder="45 000" value={monthlyStr} onChange={e => setMonthlyStr(e.target.value)} /></div>
         {monthlyStr.trim() && <div className="tk-field"><label>Дата следующего платежа</label><input className="tk-input" type="date" value={nextPaymentDate} onChange={e => setNextPaymentDate(e.target.value)} /></div>}
@@ -1837,11 +1901,11 @@ function PaymentSheet({ credit, accounts, today, onClose, onSave }: {
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
             {credit.monthlyPayment != null && (
               <button type="button" className="tk-emoji-opt" style={{ width: 'auto', padding: '6px 12px', fontSize: 13 }} onClick={() => setAmountStr(String(credit.monthlyPayment))}>
-                Платёж {formatMoney(credit.monthlyPayment, credit.currency)}
+                Платёж {fmt(credit.monthlyPayment, credit.currency)}
               </button>
             )}
             <button type="button" className="tk-emoji-opt" style={{ width: 'auto', padding: '6px 12px', fontSize: 13 }} onClick={() => setAmountStr(String(credit.remaining))}>
-              Закрыть полностью {formatMoney(credit.remaining, credit.currency)}
+              Закрыть полностью {fmt(credit.remaining, credit.currency)}
             </button>
           </div>
         </div>
