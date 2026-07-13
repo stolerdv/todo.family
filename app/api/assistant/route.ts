@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import Anthropic from '@anthropic-ai/sdk'
+import { GoogleGenAI, Type, FunctionCallingConfigMode, type FunctionDeclaration } from '@google/genai'
 import { getUserFromRequest } from '@/lib/getUser'
 import { getAccounts, getCategories, createTxn, createTransfer, getSpaces, getSettings, updateAccount } from '@/lib/finance'
 import { createEvent, getSections, createSection, createTask, updateTask } from '@/lib/db'
@@ -9,7 +9,8 @@ import { accountValue, depositValue, combinedTotal, formatMoney } from '@/lib/fi
 
 export const dynamic = 'force-dynamic'
 
-const client = new Anthropic()
+const GEMINI_MODEL = 'gemini-flash-latest'
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
 
 function findByName<T extends { name: string }>(list: T[], name: string): T | null {
   const q = name.trim().toLowerCase()
@@ -70,177 +71,159 @@ export async function POST(req: NextRequest) {
       return h.targetPerDay > 1 ? `${h.name} (сейчас ${c}/${h.targetPerDay} за сегодня)` : h.name
     }).join(', ') || '(привычек пока нет)'
 
-    const tools: Anthropic.Tool[] = [
+    const tools: FunctionDeclaration[] = [
       {
         name: 'add_expense',
         description: 'Записать расход со счёта',
-        strict: true,
-        input_schema: {
-          type: 'object',
+        parameters: {
+          type: Type.OBJECT,
           properties: {
-            accountName: { type: 'string', description: `Название счёта, одно из: ${accNames}` },
-            amount: { type: 'number', description: 'Сумма расхода, положительное число' },
-            category: { type: 'string', description: `Категория расхода, одно из: ${expCatNames}` },
-            comment: { type: 'string', description: 'Короткий комментарий, если был назван' },
+            accountName: { type: Type.STRING, description: `Название счёта, одно из: ${accNames}` },
+            amount: { type: Type.NUMBER, description: 'Сумма расхода, положительное число' },
+            category: { type: Type.STRING, description: `Категория расхода, одно из: ${expCatNames}` },
+            comment: { type: Type.STRING, description: 'Короткий комментарий, если был назван' },
           },
           required: ['accountName', 'amount', 'category', 'comment'],
-          additionalProperties: false,
         },
       },
       {
         name: 'add_income',
         description: 'Записать доход на счёт',
-        strict: true,
-        input_schema: {
-          type: 'object',
+        parameters: {
+          type: Type.OBJECT,
           properties: {
-            accountName: { type: 'string', description: `Название счёта, одно из: ${accNames}` },
-            amount: { type: 'number', description: 'Сумма дохода, положительное число' },
-            category: { type: 'string', description: `Категория дохода, одно из: ${incCatNames}` },
-            comment: { type: 'string', description: 'Короткий комментарий, если был назван' },
+            accountName: { type: Type.STRING, description: `Название счёта, одно из: ${accNames}` },
+            amount: { type: Type.NUMBER, description: 'Сумма дохода, положительное число' },
+            category: { type: Type.STRING, description: `Категория дохода, одно из: ${incCatNames}` },
+            comment: { type: Type.STRING, description: 'Короткий комментарий, если был назван' },
           },
           required: ['accountName', 'amount', 'category', 'comment'],
-          additionalProperties: false,
         },
       },
       {
         name: 'add_transfer',
         description: 'Перевести деньги между двумя своими счетами',
-        strict: true,
-        input_schema: {
-          type: 'object',
+        parameters: {
+          type: Type.OBJECT,
           properties: {
-            fromAccountName: { type: 'string', description: `Счёт-источник, одно из: ${accNames}` },
-            toAccountName: { type: 'string', description: `Счёт-получатель, одно из: ${accNames}` },
-            amount: { type: 'number', description: 'Сумма перевода, положительное число' },
+            fromAccountName: { type: Type.STRING, description: `Счёт-источник, одно из: ${accNames}` },
+            toAccountName: { type: Type.STRING, description: `Счёт-получатель, одно из: ${accNames}` },
+            amount: { type: Type.NUMBER, description: 'Сумма перевода, положительное число' },
           },
           required: ['fromAccountName', 'toAccountName', 'amount'],
-          additionalProperties: false,
         },
       },
       {
         name: 'add_event',
         description: 'Добавить событие/встречу в календарь',
-        strict: true,
-        input_schema: {
-          type: 'object',
+        parameters: {
+          type: Type.OBJECT,
           properties: {
-            date: { type: 'string', description: `Дата в формате YYYY-MM-DD. Сегодня: ${today}` },
-            time: { type: 'string', description: 'Время начала HH:MM, пустая строка если весь день' },
-            title: { type: 'string', description: 'Название события' },
+            date: { type: Type.STRING, description: `Дата в формате YYYY-MM-DD. Сегодня: ${today}` },
+            time: { type: Type.STRING, description: 'Время начала HH:MM, пустая строка если весь день' },
+            title: { type: Type.STRING, description: 'Название события' },
           },
           required: ['date', 'time', 'title'],
-          additionalProperties: false,
         },
       },
       {
         name: 'add_task',
         description: 'Добавить задачу/напоминание в список дел (без конкретного времени встречи — для этого есть add_event)',
-        strict: true,
-        input_schema: {
-          type: 'object',
+        parameters: {
+          type: Type.OBJECT,
           properties: {
-            title: { type: 'string', description: 'Текст задачи' },
-            sectionName: { type: 'string', description: `Название списка, куда добавить, одно из: ${sectionNames}. Пустая строка, если не назван — попадёт в список по умолчанию.` },
-            dueDate: { type: 'string', description: `Дедлайн в формате YYYY-MM-DD, если назван (например "к пятнице", "до 20 июля"). Пустая строка, если не назван. Сегодня: ${today}` },
+            title: { type: Type.STRING, description: 'Текст задачи' },
+            sectionName: { type: Type.STRING, description: `Название списка, куда добавить, одно из: ${sectionNames}. Пустая строка, если не назван — попадёт в список по умолчанию.` },
+            dueDate: { type: Type.STRING, description: `Дедлайн в формате YYYY-MM-DD, если назван (например "к пятнице", "до 20 июля"). Пустая строка, если не назван. Сегодня: ${today}` },
           },
           required: ['title', 'sectionName', 'dueDate'],
-          additionalProperties: false,
         },
       },
       {
         name: 'mark_habit',
         description: 'Отметить прогресс по привычке из трекера на сегодня (в т.ч. частично, для привычек с несколькими подходами в день)',
-        strict: true,
-        input_schema: {
-          type: 'object',
+        parameters: {
+          type: Type.OBJECT,
           properties: {
-            habitName: { type: 'string', description: `Название привычки, одно из: ${habitNames}` },
+            habitName: { type: Type.STRING, description: `Название привычки, одно из: ${habitNames}` },
             count: {
-              type: 'integer',
+              type: Type.INTEGER,
               description:
                 'Сколько раз выполнено СЕГОДНЯ ВСЕГО (не дельта). Для обычной привычки: 1 — выполнено, 0 — снять отметку/не сделал. ' +
                 'Для привычки с несколькими подходами: посчитай итоговое число с учётом текущего прогресса из описания (например "ещё один подход" при текущем 1/4 → 2).',
             },
           },
           required: ['habitName', 'count'],
-          additionalProperties: false,
         },
       },
       {
         name: 'topup_deposit',
         description: 'Пополнить депозит своими деньгами (тело депозита увеличивается на сумму)',
-        strict: true,
-        input_schema: {
-          type: 'object',
+        parameters: {
+          type: Type.OBJECT,
           properties: {
-            accountName: { type: 'string', description: `Название депозита, одно из: ${depositNames}` },
-            amount: { type: 'number', description: 'Сумма пополнения, положительное число' },
+            accountName: { type: Type.STRING, description: `Название депозита, одно из: ${depositNames}` },
+            amount: { type: Type.NUMBER, description: 'Сумма пополнения, положительное число' },
           },
           required: ['accountName', 'amount'],
-          additionalProperties: false,
         },
       },
       {
         name: 'accrue_interest',
         description: 'Начислить проценты по депозиту за месяц (по текущей ставке депозита)',
-        strict: true,
-        input_schema: {
-          type: 'object',
+        parameters: {
+          type: Type.OBJECT,
           properties: {
-            accountName: { type: 'string', description: `Название депозита, одно из: ${depositNames}` },
+            accountName: { type: Type.STRING, description: `Название депозита, одно из: ${depositNames}` },
           },
           required: ['accountName'],
-          additionalProperties: false,
         },
       },
       {
         name: 'get_balance',
         description: 'Узнать баланс одного счёта или общий баланс всего кабинета — ничего не создаёт и не меняет, только отвечает',
-        strict: true,
-        input_schema: {
-          type: 'object',
+        parameters: {
+          type: Type.OBJECT,
           properties: {
-            accountName: { type: 'string', description: `Название счёта, одно из: ${accNames}. Пустая строка — общий баланс кабинета.` },
+            accountName: { type: Type.STRING, description: `Название счёта, одно из: ${accNames}. Пустая строка — общий баланс кабинета.` },
           },
           required: ['accountName'],
-          additionalProperties: false,
         },
       },
       {
         name: 'ask_clarification',
         description: 'Использовать, если команда неоднозначна или не хватает данных (например, неясен счёт или сумма)',
-        strict: true,
-        input_schema: {
-          type: 'object',
-          properties: { question: { type: 'string', description: 'Короткий уточняющий вопрос на русском' } },
+        parameters: {
+          type: Type.OBJECT,
+          properties: { question: { type: Type.STRING, description: 'Короткий уточняющий вопрос на русском' } },
           required: ['question'],
-          additionalProperties: false,
         },
       },
     ]
 
-    const response = await client.messages.create({
-      model: 'claude-opus-4-8',
-      max_tokens: 1024,
-      system:
-        'Ты — голосовой ассистент приложения Pen (финансы, календарь, задачи, трекер привычек). ' +
-        'Пользователь надиктовал команду на русском (возможны неточности распознавания речи). ' +
-        'Выбери ровно один инструмент, который точно соответствует команде. ' +
-        'add_event — только для встреч с конкретным временем/датой; add_task — для обычных дел и напоминаний без точного времени; ' +
-        'mark_habit — если пользователь говорит, что сделал (или не сделал) что-то из своих привычек в трекере, в т.ч. частично ("ещё один подход", "выпил 2 стакана из 4"). ' +
-        'topup_deposit — пополнить депозит своими деньгами; accrue_interest — начислить проценты по депозиту за месяц; get_balance — только ответить на вопрос о балансе, ничего не меняя. ' +
-        'Если что-то важное неясно (не назван счёт, сумма или дата) — вызови ask_clarification. ' +
-        'Даты вроде "завтра", "послезавтра", "20 июля", "к пятнице" переводи в YYYY-MM-DD относительно сегодняшней даты.',
-      tools,
-      tool_choice: { type: 'any' },
-      messages: [{ role: 'user', content: text.trim() }],
+    const response = await ai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: text.trim(),
+      config: {
+        systemInstruction:
+          'Ты — голосовой ассистент приложения Pen (финансы, календарь, задачи, трекер привычек). ' +
+          'Пользователь надиктовал команду на русском (возможны неточности распознавания речи). ' +
+          'Выбери ровно один инструмент, который точно соответствует команде. ' +
+          'add_event — только для встреч с конкретным временем/датой; add_task — для обычных дел и напоминаний без точного времени; ' +
+          'mark_habit — если пользователь говорит, что сделал (или не сделал) что-то из своих привычек в трекере, в т.ч. частично ("ещё один подход", "выпил 2 стакана из 4"). ' +
+          'topup_deposit — пополнить депозит своими деньгами; accrue_interest — начислить проценты по депозиту за месяц; get_balance — только ответить на вопрос о балансе, ничего не меняя. ' +
+          'Если что-то важное неясно (не назван счёт, сумма или дата) — вызови ask_clarification. ' +
+          'Даты вроде "завтра", "послезавтра", "20 июля", "к пятнице" переводи в YYYY-MM-DD относительно сегодняшней даты.',
+        tools: [{ functionDeclarations: tools }],
+        toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.ANY } },
+      },
     })
 
-    const toolUse = response.content.find((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use')
-    if (!toolUse) {
+    const call = response.functionCalls?.[0]
+    if (!call) {
       return NextResponse.json({ message: 'Не удалось разобрать команду. Попробуйте сформулировать иначе.' })
     }
+    const toolUse = { name: call.name, input: call.args as any }
 
     const consumed = await tryConsumeUsage(user.userId)
     if (!consumed) {
