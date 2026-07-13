@@ -418,9 +418,9 @@ export async function createTransfer(userId: string, t: TransferInput): Promise<
 }
 
 // удаляет операцию и возвращает баланс назад.
-export async function deleteTxn(id: string, userId: string): Promise<{ reverts: { accountId: string; delta: number }[] } | null> {
+export async function deleteTxn(id: string, userId: string): Promise<{ reverts: { accountId: string; delta: number }[]; creditId?: string } | null> {
   const rows = await sql()`
-    SELECT t.account_id, t.type, t.amount::float8 AS amount, t.to_account_id, t.to_amount::float8 AS to_amount
+    SELECT t.account_id, t.type, t.amount::float8 AS amount, t.to_account_id, t.to_amount::float8 AS to_amount, t.category
     FROM finance_txns t
     JOIN finance_space_members m ON m.space_id = t.space_id AND m.user_id = ${userId}
     WHERE t.id = ${id} LIMIT 1`
@@ -438,11 +438,26 @@ export async function deleteTxn(id: string, userId: string): Promise<{ reverts: 
     return { reverts: [{ accountId: r.account_id, delta: amount }, { accountId: r.to_account_id, delta: -toAmount }] }
   }
   const reverse = r.type === 'expense' ? amount : -amount
-  await q.transaction([
+  const statements = [
     q`DELETE FROM finance_txns WHERE id = ${id}`,
     q`UPDATE finance_accounts SET balance = balance + ${reverse} WHERE id = ${r.account_id}`,
-  ])
-  return { reverts: [{ accountId: r.account_id, delta: reverse }] }
+  ]
+  // операция связана с платежом по кредиту/долгу (см. createCreditPayment) — откатываем и его,
+  // иначе кредит останется «погашен» на эту сумму без единой видимой операции
+  let creditId: string | undefined
+  if (typeof r.category === 'string' && r.category.startsWith('credit:')) {
+    creditId = r.category.slice('credit:'.length)
+    const crows = await sql()`SELECT remaining::float8 AS remaining FROM finance_credits WHERE id = ${creditId} LIMIT 1`
+    if (crows[0]) {
+      const newRemaining = Math.round((Number((crows[0] as any).remaining) + amount) * 100) / 100
+      statements.push(q`UPDATE finance_credits SET remaining = ${newRemaining}, archived = false WHERE id = ${creditId}`)
+      statements.push(q`DELETE FROM finance_credit_payments WHERE txn_id = ${id}`)
+    } else {
+      creditId = undefined
+    }
+  }
+  await q.transaction(statements)
+  return { reverts: [{ accountId: r.account_id, delta: reverse }], creditId }
 }
 
 // ── Категории (свои у каждого кабинета) ─────────────────────────────────────────
@@ -677,9 +692,11 @@ export interface CreditPaymentInput {
 
 // платёж по кредиту/долгу: уменьшает остаток и (если указан счёт) атомарно меняет его баланс —
 // списание для 'owe', зачисление для 'owed'. Остаток не уходит в минус, при 0 кредит закрывается.
-export async function createCreditPayment(creditId: string, userId: string, p: CreditPaymentInput): Promise<{ payment: CreditPayment; credit: Credit } | null> {
+// Если указан счёт — платёж ТАКЖЕ пишется в finance_txns (category = 'credit:<id>', вне бюджетов
+// по категориям), чтобы он был виден в «Последние операции», а не только в истории платежей кредита.
+export async function createCreditPayment(creditId: string, userId: string, p: CreditPaymentInput): Promise<{ payment: CreditPayment; credit: Credit; txn: Txn | null } | null> {
   const rows = await sql()`
-    SELECT c.direction, c.remaining::float8 AS remaining, to_char(c.next_payment_date,'YYYY-MM-DD') AS next_payment_date
+    SELECT c.space_id, c.name, c.direction, c.remaining::float8 AS remaining, to_char(c.next_payment_date,'YYYY-MM-DD') AS next_payment_date
     FROM finance_credits c
     JOIN finance_space_members m ON m.space_id = c.space_id AND m.user_id = ${userId}
     WHERE c.id = ${creditId} LIMIT 1`
@@ -699,19 +716,38 @@ export async function createCreditPayment(creditId: string, userId: string, p: C
       ? q`UPDATE finance_credits AS c SET remaining = ${newRemaining}, archived = ${newRemaining <= 0}, next_payment_date = ${newNextDate}::date WHERE id = ${creditId} RETURNING ${sql().unsafe(CREDIT_FIELDS)}`
       : q`UPDATE finance_credits AS c SET remaining = ${newRemaining}, archived = ${newRemaining <= 0} WHERE id = ${creditId} RETURNING ${sql().unsafe(CREDIT_FIELDS)}`,
   ]
-  if (p.accountId) statements.push(q`UPDATE finance_accounts SET balance = balance + ${accountDelta} WHERE id = ${p.accountId}`)
+  let txnIndex = -1
+  if (p.accountId) {
+    statements.push(q`UPDATE finance_accounts SET balance = balance + ${accountDelta} WHERE id = ${p.accountId}`)
+    const txnType = cur.direction === 'owe' ? 'expense' : 'income'
+    const txnComment = cur.name + (p.comment ? ` · ${p.comment}` : '')
+    statements.push(q`INSERT INTO finance_txns (user_id, space_id, account_id, type, amount, category, comment, day)
+      VALUES (${userId}, ${cur.space_id}, ${p.accountId}, ${txnType}, ${amount}, ${'credit:' + creditId}, ${txnComment}, COALESCE(${p.day ?? null}::date, CURRENT_DATE))
+      RETURNING id, user_id, account_id, type, amount::float8 AS amount, category, comment,
+                to_char(day, 'YYYY-MM-DD') AS day, to_account_id, to_amount::float8 AS to_amount, created_at`)
+    txnIndex = 3
+  }
   const res = await q.transaction(statements)
   const payRow = (res[0] as any[])[0]
   const author = await sql()`SELECT username FROM todo_users WHERE id = ${userId} LIMIT 1`
   payRow.author_name = (author[0] as any)?.username ?? ''
   const creditRow = (res[1] as any[])[0]
-  return { payment: mapPayment(payRow), credit: mapCredit(creditRow, []) }
+  let txn: Txn | null = null
+  if (txnIndex >= 0) {
+    const txnRow = (res[txnIndex] as any[])[0]
+    txnRow.author_name = payRow.author_name
+    txn = mapTxn(txnRow)
+    // связываем платёж с операцией, чтобы при удалении платежа удалить и её (см. deleteCreditPayment)
+    await sql()`UPDATE finance_credit_payments SET txn_id = ${txn.id} WHERE id = ${payRow.id}`
+  }
+  return { payment: mapPayment(payRow), credit: mapCredit(creditRow, []), txn }
 }
 
-// удаляет платёж и возвращает остаток кредита / баланс счёта назад
-export async function deleteCreditPayment(paymentId: string, userId: string): Promise<{ creditId: string; accountId: string | null; accountDelta: number } | null> {
+// удаляет платёж и возвращает остаток кредита / баланс счёта назад; если платёж был связан
+// с операцией в finance_txns (см. createCreditPayment) — удаляет и её, чтобы не оставалась «призраком»
+export async function deleteCreditPayment(paymentId: string, userId: string): Promise<{ creditId: string; accountId: string | null; accountDelta: number; txnId: string | null } | null> {
   const rows = await sql()`
-    SELECT p.credit_id, p.account_id, p.amount::float8 AS amount, c.direction, c.remaining::float8 AS remaining
+    SELECT p.credit_id, p.account_id, p.amount::float8 AS amount, p.txn_id, c.direction, c.remaining::float8 AS remaining
     FROM finance_credit_payments p
     JOIN finance_credits c ON c.id = p.credit_id
     JOIN finance_space_members m ON m.space_id = c.space_id AND m.user_id = ${userId}
@@ -727,6 +763,7 @@ export async function deleteCreditPayment(paymentId: string, userId: string): Pr
     q`UPDATE finance_credits SET remaining = ${newRemaining}, archived = false WHERE id = ${cur.credit_id}`,
   ]
   if (cur.account_id) statements.push(q`UPDATE finance_accounts SET balance = balance + ${accountDelta} WHERE id = ${cur.account_id}`)
+  if (cur.txn_id) statements.push(q`DELETE FROM finance_txns WHERE id = ${cur.txn_id}`)
   await q.transaction(statements)
-  return { creditId: cur.credit_id, accountId: cur.account_id ?? null, accountDelta: cur.account_id ? accountDelta : 0 }
+  return { creditId: cur.credit_id, accountId: cur.account_id ?? null, accountDelta: cur.account_id ? accountDelta : 0, txnId: cur.txn_id ?? null }
 }

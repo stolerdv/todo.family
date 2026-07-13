@@ -97,6 +97,7 @@ export default function FinancePage() {
   const bump = (id: string, delta: number) => setAccounts(prev => prev.map(a => a.id === id ? { ...a, balance: a.balance + delta } : a))
 
   const catInfo = useCallback((key: string): { emoji: string; label: string } => {
+    if (key.startsWith('credit:')) return { emoji: '💳', label: 'Кредит/долг' }
     const c = categories.find(x => x.id === key)
     if (c) return { emoji: c.emoji, label: c.name }
     const b = categoryMeta(key)
@@ -256,6 +257,7 @@ export default function FinancePage() {
     const r = await res.json()
     setTxns(prev => prev.filter(x => x.id !== t.id))
     if (r && Array.isArray(r.reverts)) r.reverts.forEach((rv: any) => bump(rv.accountId, rv.delta))
+    if (r?.creditId) setCredits(prev => prev.map(c => c.id === r.creditId ? { ...c, remaining: c.remaining + Math.abs(t.amount), archived: false } : c))
   }, [])
 
   // редактирование расхода/дохода (не перевод) — сумма/категория/комментарий/дата
@@ -331,13 +333,15 @@ export default function FinancePage() {
     showToast('Закрыто')
   }, [showToast])
 
-  // платёж по кредиту/долгу: списывает/зачисляет на выбранный счёт и уменьшает остаток
+  // платёж по кредиту/долгу: списывает/зачисляет на выбранный счёт и уменьшает остаток.
+  // Если указан счёт — сервер также пишет связанную операцию в finance_txns (виднее в истории).
   const payCreditFn = useCallback(async (c: Credit, data: { accountId: string | null; amount: number; day: string; comment: string; advanceNextPayment: boolean }) => {
     const res = await fetch(`/api/finance/credits/${c.id}/payments`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
     if (!res.ok) { showToast('Не удалось'); return }
-    const { payment, credit }: { payment: CreditPayment; credit: Credit } = await res.json()
+    const { payment, credit, txn }: { payment: CreditPayment; credit: Credit; txn: Txn | null } = await res.json()
     patchCredit(c.id, { remaining: credit.remaining, archived: credit.archived, nextPaymentDate: credit.nextPaymentDate, payments: [payment, ...c.payments] })
     if (data.accountId) bump(data.accountId, c.direction === 'owe' ? -Math.abs(data.amount) : Math.abs(data.amount))
+    if (txn) setTxns(prev => [txn, ...prev])
     setModal(null); setPayingCredit(null)
     showToast(credit.archived ? 'Оплачено полностью 🎉' : 'Платёж записан')
   }, [showToast])
@@ -348,6 +352,7 @@ export default function FinancePage() {
     const r = await res.json()
     patchCredit(c.id, { remaining: c.remaining + Math.abs(p.amount), archived: false, payments: c.payments.filter(x => x.id !== p.id) })
     if (r.accountId && r.accountDelta) bump(r.accountId, r.accountDelta)
+    if (r.txnId) setTxns(prev => prev.filter(t => t.id !== r.txnId))
   }, [])
 
   const detailAcc = view.name === 'detail' ? accounts.find(a => a.id === view.id) : null
@@ -413,7 +418,13 @@ export default function FinancePage() {
       )}
 
       {modal === 'account' && <AccountSheet editing={editingAcc} today={today} onClose={() => { setModal(null); setEditingAcc(null) }} onSave={saveAccount} onDelete={deleteAccount} />}
-      {modal === 'op' && <OperationSheet accounts={spendable} categories={categories} onClose={() => setModal(null)} onSave={addOp} onTransfer={addTransfer} onAddAccount={() => openAccountSheet(null)} />}
+      {modal === 'op' && (
+        <OperationSheet
+          accounts={spendable} categories={categories} credits={credits} today={today}
+          onClose={() => setModal(null)} onSave={addOp} onTransfer={addTransfer} onAddAccount={() => openAccountSheet(null)}
+          onPayCredit={payCreditFn}
+        />
+      )}
       {modal === 'menu' && <SettingsMenu onClose={() => setModal(null)} onReports={() => setModal('reports')} onRates={() => setModal('rates')} onCats={() => setModal('cats')} onBudgets={() => setModal('budgets')} onSpaces={() => setModal('space')} onCredits={() => { setModal(null); setView({ name: 'credits' }) }} />}
       {modal === 'reports' && <ReportsSheet accounts={active} txns={txns} categories={categories} settings={settings} today={today} onClose={() => setModal('menu')} />}
       {editingOp && <EditOpSheet t={editingOp} categories={categories} onClose={() => setEditingOp(null)} onSave={patch => { editOp(editingOp, patch); setEditingOp(null) }} />}
@@ -677,13 +688,14 @@ function OpRow({ t, info, fromName, toName, currency, onDelete, onEdit }: {
   onDelete: (t: Txn) => void; onEdit?: (t: Txn) => void
 }) {
   const isTransfer = t.type === 'transfer'
+  const isCreditPayment = t.category.startsWith('credit:')
   const income = t.type === 'income'
   const emoji = isTransfer ? '🔄' : info.emoji
   const label = isTransfer ? 'Перевод' : info.label
   const sub = isTransfer ? `${fromName} → ${toName}` : fromName
   const color = isTransfer ? 'var(--tk-muted)' : (income ? 'var(--tk-good)' : 'var(--tk-text)')
   const sign = isTransfer ? '' : (income ? '+' : '−')
-  const canEdit = !isTransfer && !!onEdit
+  const canEdit = !isTransfer && !isCreditPayment && !!onEdit
   return (
     <div className="fin-kv" style={{ gap: 12 }}>
       <div style={{ width: 34, height: 34, borderRadius: 9, background: 'var(--tk-card-2)', display: 'grid', placeItems: 'center', fontSize: 17, flex: '0 0 auto' }}>{emoji}</div>
@@ -860,14 +872,15 @@ function DetailView({ acc, txns, today, catInfo, accountName, onBack, onEdit, on
 }
 
 // ── Быстрая операция ────────────────────────────────────────────────────────────
-function OperationSheet({ accounts, categories, onClose, onSave, onTransfer, onAddAccount }: {
-  accounts: Account[]; categories: Category[]
+function OperationSheet({ accounts, categories, credits, today, onClose, onSave, onTransfer, onAddAccount, onPayCredit }: {
+  accounts: Account[]; categories: Category[]; credits: Credit[]; today: string
   onClose: () => void
   onSave: (d: { accountId: string; type: TxnType; amount: number; category: string; comment: string }) => void
   onTransfer: (d: { fromAccountId: string; toAccountId: string; amount: number; toAmount: number; comment: string }) => void
   onAddAccount: () => void
+  onPayCredit: (c: Credit, d: { accountId: string | null; amount: number; day: string; comment: string; advanceNextPayment: boolean }) => void
 }) {
-  const [type, setType] = useState<TxnType>('expense')
+  const [type, setType] = useState<TxnType | 'credit'>('expense')
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? '')
   const [toId, setToId] = useState(accounts[1]?.id ?? '')
   const [amount, setAmount] = useState('')
@@ -877,16 +890,35 @@ function OperationSheet({ accounts, categories, onClose, onSave, onTransfer, onA
   const [submitting, setSubmitting] = useState(false)
   const [err, setErr] = useState('')
 
+  const activeCredits = credits.filter(c => !c.archived)
+  const [creditId, setCreditId] = useState('')
+  const selectedCredit = activeCredits.find(c => c.id === creditId)
+  const creditMatching = selectedCredit ? accounts.filter(a => a.currency === selectedCredit.currency) : []
+  const creditPickList = creditMatching.length ? creditMatching : accounts
+  const [creditAccountId, setCreditAccountId] = useState<string | null>(null)
+
   const cats = categories.filter(c => c.kind === (type === 'income' ? 'income' : 'expense'))
   const from = accounts.find(a => a.id === accountId)
   const to = accounts.find(a => a.id === toId)
   const isTransfer = type === 'transfer'
+  const isCredit = type === 'credit'
   const crossCur = isTransfer && from && to && from.currency !== to.currency
+
+  const selectCredit = (c: Credit) => {
+    setCreditId(c.id)
+    const def = c.monthlyPayment ?? c.remaining
+    setAmount(def > 0 ? String(def) : '')
+    const matching = accounts.filter(a => a.currency === c.currency)
+    setCreditAccountId((matching.length ? matching : accounts)[0]?.id ?? null)
+  }
 
   // защита от двойной отправки — повторные тапы до ответа сервера дублировали операцию
   const submit = () => {
     if (submitting) return
-    if (isTransfer) {
+    if (isCredit) {
+      if (!selectedCredit) { setErr('Выбери кредит или долг'); return }
+      if (!(parseMoney(amount) > 0)) { setErr('Введите сумму платежа'); return }
+    } else if (isTransfer) {
       if (!accountId || !toId) { setErr('Выбери, откуда и куда переводить'); return }
       if (accountId === toId) { setErr('Счета отправления и получения должны отличаться'); return }
       if (!(parseMoney(amount) > 0)) { setErr('Введите сумму перевода'); return }
@@ -897,10 +929,15 @@ function OperationSheet({ accounts, categories, onClose, onSave, onTransfer, onA
     }
     setErr('')
     setSubmitting(true)
-    if (isTransfer) {
+    if (isCredit) {
+      const amt = parseMoney(amount)
+      const isMonthly = selectedCredit!.monthlyPayment != null && Math.abs(amt - selectedCredit!.monthlyPayment) < 0.005
+      const isFull = amt >= selectedCredit!.remaining - 0.005
+      onPayCredit(selectedCredit!, { accountId: creditAccountId, amount: amt, day: today, comment: comment.trim(), advanceNextPayment: isMonthly && !isFull })
+    } else if (isTransfer) {
       onTransfer({ fromAccountId: accountId, toAccountId: toId, amount: parseMoney(amount), toAmount: crossCur ? parseMoney(toAmount) : parseMoney(amount), comment: comment.trim() })
     } else {
-      onSave({ accountId, type, amount: parseMoney(amount), category: category || (cats[0]?.id ?? ''), comment: comment.trim() })
+      onSave({ accountId, type: type as TxnType, amount: parseMoney(amount), category: category || (cats[0]?.id ?? ''), comment: comment.trim() })
     }
   }
 
@@ -926,11 +963,59 @@ function OperationSheet({ accounts, categories, onClose, onSave, onTransfer, onA
             <button type="button" className={type === 'expense' ? 'tk-sel' : ''} onClick={() => { setType('expense'); setCategory('') }}>Расход</button>
             <button type="button" className={type === 'income' ? 'tk-sel' : ''} onClick={() => { setType('income'); setCategory('') }}>Доход</button>
             <button type="button" className={type === 'transfer' ? 'tk-sel' : ''} onClick={() => setType('transfer')}>Перевод</button>
+            <button type="button" className={type === 'credit' ? 'tk-sel' : ''} onClick={() => setType('credit')}>Кредит</button>
           </div>
         </div>
 
         {!accounts.length ? (
           <div className="tk-field"><p className="tk-hint">Сначала добавь счёт.</p><button className="tk-btn-primary" onClick={onAddAccount}>+ Добавить счёт</button></div>
+        ) : isCredit ? (
+          !activeCredits.length ? (
+            <div className="tk-field"><p className="tk-hint">Нет активных кредитов или долгов. Добавь через ⚙ → Кредиты и долги.</p></div>
+          ) : (
+            <>
+              <div className="tk-field">
+                <label>Какой</label>
+                <div className="tk-emoji-picker">
+                  {activeCredits.map(c => (
+                    <button key={c.id} type="button" className={`tk-emoji-opt ${creditId === c.id ? 'tk-sel' : ''}`} style={{ width: 'auto', padding: '0 12px', gap: 6, display: 'flex', alignItems: 'center', fontSize: 14, fontWeight: 600 }} onClick={() => selectCredit(c)}>
+                      💳 {c.name} · {fmt(c.remaining, c.currency)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {selectedCredit && (
+                <>
+                  <div className="tk-field">
+                    <label>Сумма ({selectedCredit.currency})</label>
+                    <input className="tk-input" inputMode="decimal" autoFocus value={amount} onChange={e => setAmount(e.target.value)} style={{ fontSize: 26, fontWeight: 800, textAlign: 'center' }} />
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+                      {selectedCredit.monthlyPayment != null && (
+                        <button type="button" className="tk-emoji-opt" style={{ width: 'auto', padding: '6px 12px', fontSize: 13 }} onClick={() => setAmount(String(selectedCredit.monthlyPayment))}>
+                          Платёж {fmt(selectedCredit.monthlyPayment, selectedCredit.currency)}
+                        </button>
+                      )}
+                      <button type="button" className="tk-emoji-opt" style={{ width: 'auto', padding: '6px 12px', fontSize: 13 }} onClick={() => setAmount(String(selectedCredit.remaining))}>
+                        Закрыть полностью {fmt(selectedCredit.remaining, selectedCredit.currency)}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="tk-field">
+                    <label>{selectedCredit.direction === 'owe' ? 'Списать со счёта' : 'Зачислить на счёт'}</label>
+                    <div className="tk-emoji-picker">
+                      <button type="button" className={`tk-emoji-opt ${creditAccountId === null ? 'tk-sel' : ''}`} style={{ width: 'auto', padding: '0 12px', fontSize: 14, fontWeight: 600 }} onClick={() => setCreditAccountId(null)}>Без счёта</button>
+                      {creditPickList.map(a => (
+                        <button key={a.id} type="button" className={`tk-emoji-opt ${creditAccountId === a.id ? 'tk-sel' : ''}`} style={{ width: 'auto', padding: '0 12px', gap: 6, display: 'flex', alignItems: 'center', fontSize: 14, fontWeight: 600 }} onClick={() => setCreditAccountId(a.id)}>
+                          <span style={{ fontSize: 17 }}>{a.emoji}</span>{a.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="tk-field"><label>Комментарий (необязательно)</label><input className="tk-input" maxLength={100} value={comment} onChange={e => setComment(e.target.value)} /></div>
+                </>
+              )}
+            </>
+          )
         ) : isTransfer ? (
           <>
             <div className="tk-field"><label>Откуда</label>{accountPicker(accountId, setAccountId, toId)}</div>
@@ -968,12 +1053,12 @@ function OperationSheet({ accounts, categories, onClose, onSave, onTransfer, onA
           </>
         )}
 
-        {accounts.length > 0 && (
+        {accounts.length > 0 && !(isCredit && !activeCredits.length) && (
           <>
             {err && <p className="tk-hint" style={{ color: 'var(--tk-danger)' }}>{err}</p>}
             <div className="tk-sheet-actions">
               <button className="tk-btn-primary" disabled={submitting} style={{ opacity: submitting ? .5 : 1 }} onClick={submit}>
-                {submitting ? 'Сохраняем…' : isTransfer ? 'Перевести' : type === 'expense' ? 'Записать расход' : 'Записать доход'}
+                {submitting ? 'Сохраняем…' : isCredit ? 'Записать платёж' : isTransfer ? 'Перевести' : type === 'expense' ? 'Записать расход' : 'Записать доход'}
               </button>
               <button className="tk-btn-ghost" onClick={onClose}>Отмена</button>
             </div>
