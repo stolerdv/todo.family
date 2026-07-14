@@ -12,7 +12,7 @@ export const dynamic = 'force-dynamic'
 // дольше при высокой нагрузке, поэтому даём больше времени.
 export const maxDuration = 60
 
-const GEMINI_MODEL = 'gemini-flash-latest'
+const GEMINI_MODEL = 'gemini-flash-lite-latest'
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
 
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)) }

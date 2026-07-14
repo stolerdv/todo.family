@@ -169,6 +169,7 @@ export default function VoiceAssistant() {
               </svg>
             </button>
             <textarea
+              autoFocus
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
