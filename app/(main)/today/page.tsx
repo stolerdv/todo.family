@@ -6,6 +6,7 @@ import type { Habit } from '@/lib/tracker'
 import type { Account, FinanceSettings, Budget, Credit } from '@/lib/finance'
 import { Dates, Stats, toCalc } from '@/lib/trackerStats'
 import { eventOccursOn } from '@/lib/events'
+import { buildIcs, downloadIcs } from '@/lib/ics'
 import { categorySpend, currenciesInUse } from '@/lib/financeCalc'
 import { fmt, isMoneyHidden, setMoneyHidden, loadMoneyHidden } from '@/lib/hideMoney'
 import VoiceAssistant from '@/components/VoiceAssistant'
@@ -332,7 +333,7 @@ export default function TodayPage() {
           <div className="space-y-1.5">
             {agenda.map(item => item.type === 'task'
               ? <ScheduleTaskRow key={item.key} t={item.task} sectionName={sectionName(item.task.sectionId)} onDone={markTaskDone} />
-              : <ScheduleEventRow key={item.key} e={item.event} />)}
+              : <ScheduleEventRow key={item.key} e={item.event} day={today} />)}
           </div>
         </Section>
       )}
@@ -418,6 +419,12 @@ function Section({ title, count, accent, children }: { title: string; count?: nu
   )
 }
 
+function IcsButton({ onExport }: { onExport: () => void }) {
+  return (
+    <button onClick={onExport} aria-label="Добавить в календарь телефона" className="shrink-0 text-base px-1 opacity-60 hover:opacity-100 transition">📅</button>
+  )
+}
+
 function TaskRow({ t, sectionName, today, onDone, showDate }: { t: Task; sectionName: string; today: string; onDone: (t: Task) => void; showDate?: boolean }) {
   const overdueDays = t.dueDate && t.dueDate < today ? Math.round((Dates.parse(today).getTime() - Dates.parse(t.dueDate).getTime()) / 86400000) : 0
   return (
@@ -431,6 +438,7 @@ function TaskRow({ t, sectionName, today, onDone, showDate }: { t: Task; section
           {showDate && overdueDays > 0 && <span className="text-xs px-1.5 py-0.5 rounded-full text-red-400 bg-red-500/10">просрочено {overdueDays}д</span>}
         </div>
       </div>
+      {t.dueDate && <IcsButton onExport={() => downloadIcs(`${t.title}.ics`, buildIcs({ uid: t.id, title: t.title, day: t.dueDate! }))} />}
     </div>
   )
 }
@@ -445,11 +453,12 @@ function ScheduleTaskRow({ t, sectionName, onDone }: { t: Task; sectionName: str
         <p className="text-sm text-gray-200 truncate">{t.title}</p>
         {sectionName && <p className="text-xs text-gray-600 truncate">{sectionName}</p>}
       </div>
+      {t.dueDate && <IcsButton onExport={() => downloadIcs(`${t.title}.ics`, buildIcs({ uid: t.id, title: t.title, day: t.dueDate! }))} />}
     </div>
   )
 }
 
-function ScheduleEventRow({ e }: { e: CalEvent }) {
+function ScheduleEventRow({ e, day }: { e: CalEvent; day: string }) {
   return (
     <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-3">
       <span className="text-sm font-bold text-accent-400 tabular-nums w-14 shrink-0">{e.time || 'Весь день'}</span>
@@ -461,6 +470,7 @@ function ScheduleEventRow({ e }: { e: CalEvent }) {
           </p>
         )}
       </div>
+      <IcsButton onExport={() => downloadIcs(`${e.title}.ics`, buildIcs({ uid: e.id, title: e.title, day, time: e.time, endTime: e.endTime, note: e.note, repeat: e.repeat }))} />
     </div>
   )
 }

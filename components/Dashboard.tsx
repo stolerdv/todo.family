@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import type { Task, Section, Subtask, CalEvent, RepeatRule } from '@/lib/db'
 import { eventOccursOn } from '@/lib/events'
+import { buildIcs, downloadIcs } from '@/lib/ics'
 
 type EventDraft = { day: string; time: string; endTime: string; title: string; note: string; repeat: RepeatRule }
 
@@ -382,9 +383,16 @@ function EventSheet({ day, editing, onClose, onSave, onDelete }: {
             style={{ boxShadow: canSave ? '0 10px 30px -8px rgba(255,122,26,.5)' : 'none' }}>Сохранить</button>
         </div>
 
+        {editing && (
+          <button onClick={() => downloadIcs(`${editing.title}.ics`, buildIcs({ uid: editing.id, title: editing.title, day: editing.day, time: editing.time, endTime: editing.endTime, note: editing.note, repeat: editing.repeat }))}
+            className="w-full mt-3 text-sm font-medium py-2.5 rounded-xl transition text-gray-500 hover:text-accent-400">
+            📅 Добавить в календарь телефона
+          </button>
+        )}
+
         {editing && onDelete && (
           <button onClick={() => confirmDelete ? onDelete() : setConfirmDelete(true)}
-            className={`w-full mt-3 text-sm font-medium py-2.5 rounded-xl transition ${confirmDelete ? 'bg-red-500/15 text-red-400 border border-red-500/30' : 'text-gray-500 hover:text-red-400'}`}>
+            className={`w-full mt-1 text-sm font-medium py-2.5 rounded-xl transition ${confirmDelete ? 'bg-red-500/15 text-red-400 border border-red-500/30' : 'text-gray-500 hover:text-red-400'}`}>
             {confirmDelete ? 'Точно удалить? Нажми ещё раз' : editing.repeat ? 'Удалить все повторения' : 'Удалить событие'}
           </button>
         )}
