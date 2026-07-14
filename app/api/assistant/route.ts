@@ -8,9 +8,27 @@ import { getUsage, tryConsumeUsage, FREE_MONTHLY_LIMIT } from '@/lib/assistant'
 import { accountValue, depositValue, combinedTotal, formatMoney } from '@/lib/financeCalc'
 
 export const dynamic = 'force-dynamic'
+// Vercel по умолчанию обрывает функцию через 10с (Hobby) — Gemini иногда отвечает
+// дольше при высокой нагрузке, поэтому даём больше времени.
+export const maxDuration = 60
 
 const GEMINI_MODEL = 'gemini-flash-latest'
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
+
+function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)) }
+
+// Gemini иногда отдаёт 503 UNAVAILABLE («высокая нагрузка») — это временно, одна
+// повторная попытка через секунду обычно проходит, без неё пользователь видел бы
+// либо долгое зависание, либо ошибку на ровном месте.
+async function generateWithRetry(params: Parameters<typeof ai.models.generateContent>[0]) {
+  try {
+    return await ai.models.generateContent(params)
+  } catch (e: any) {
+    if (e?.status !== 503) throw e
+    await sleep(1000)
+    return await ai.models.generateContent(params)
+  }
+}
 
 function findByName<T extends { name: string }>(list: T[], name: string): T | null {
   const q = name.trim().toLowerCase()
@@ -29,16 +47,17 @@ export async function POST(req: NextRequest) {
   try {
     const user = await getUserFromRequest()
     if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    const userId = user.userId
 
     const { text, spaceId: bodySpaceId } = await req.json()
     if (!text?.trim()) return NextResponse.json({ error: 'text required' }, { status: 400 })
 
     // без выбранного кабинета берём первый (личный создаётся автоматически) — команды
     // вроде задач/событий не требуют финансового контекста, но список счетов нужен всегда
-    const spaceId = bodySpaceId || (await getSpaces(user.userId))[0]?.id
+    const spaceId = bodySpaceId || (await getSpaces(userId))[0]?.id
     if (!spaceId) return NextResponse.json({ error: 'no_space' }, { status: 400 })
 
-    const usage = await getUsage(user.userId)
+    const usage = await getUsage(userId)
     if (usage.count >= usage.limit) {
       return NextResponse.json(
         { error: 'limit_exceeded', message: `Лимит голосовых команд исчерпан (${FREE_MONTHLY_LIMIT}/мес). Попробуйте в следующем месяце.` },
@@ -47,11 +66,11 @@ export async function POST(req: NextRequest) {
     }
 
     const [accounts, categories, sections, habits, settings] = await Promise.all([
-      getAccounts(spaceId, user.userId),
-      getCategories(spaceId, user.userId),
-      getSections(user.userId),
-      getHabits(user.userId),
-      getSettings(user.userId),
+      getAccounts(spaceId, userId),
+      getCategories(spaceId, userId),
+      getSections(userId),
+      getHabits(userId),
+      getSettings(userId),
     ])
     const expenseCats = categories.filter(c => c.kind === 'expense')
     const incomeCats = categories.filter(c => c.kind === 'income')
@@ -201,14 +220,16 @@ export async function POST(req: NextRequest) {
       },
     ]
 
-    const response = await ai.models.generateContent({
+    const response = await generateWithRetry({
       model: GEMINI_MODEL,
       contents: text.trim(),
       config: {
         systemInstruction:
           'Ты — голосовой ассистент приложения Pen (финансы, календарь, задачи, трекер привычек). ' +
           'Пользователь надиктовал команду на русском (возможны неточности распознавания речи). ' +
-          'Выбери ровно один инструмент, который точно соответствует команде. ' +
+          'Вызови один инструмент на каждое отдельное действие. Если в одной фразе описано несколько ' +
+          'независимых действий («в 5:30 молитва, в 7:00 начало работы» — это ДВА события) — вызови ' +
+          'инструмент несколько раз, по разу на каждое. ' +
           'add_event — только для встреч с конкретным временем/датой; add_task — для обычных дел и напоминаний без точного времени; ' +
           'mark_habit — если пользователь говорит, что сделал (или не сделал) что-то из своих привычек в трекере, в т.ч. частично ("ещё один подход", "выпил 2 стакана из 4"). ' +
           'topup_deposit — пополнить депозит своими деньгами; accrue_interest — начислить проценты по депозиту за месяц; get_balance — только ответить на вопрос о балансе, ничего не меняя. ' +
@@ -219,13 +240,12 @@ export async function POST(req: NextRequest) {
       },
     })
 
-    const call = response.functionCalls?.[0]
-    if (!call) {
+    const calls = response.functionCalls ?? []
+    if (!calls.length) {
       return NextResponse.json({ message: 'Не удалось разобрать команду. Попробуйте сформулировать иначе.' })
     }
-    const toolUse = { name: call.name, input: call.args as any }
 
-    const consumed = await tryConsumeUsage(user.userId)
+    const consumed = await tryConsumeUsage(userId)
     if (!consumed) {
       return NextResponse.json(
         { error: 'limit_exceeded', message: `Лимит голосовых команд исчерпан (${FREE_MONTHLY_LIMIT}/мес). Попробуйте в следующем месяце.` },
@@ -233,113 +253,104 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const input = toolUse.input as any
-
-    if (toolUse.name === 'ask_clarification') {
-      return NextResponse.json({ message: input.question })
-    }
-
-    if (toolUse.name === 'add_expense' || toolUse.name === 'add_income') {
-      if (activeAccounts.length === 0) return NextResponse.json({ message: 'Сначала добавьте счёт в разделе «Финансы».' })
-      const acc = findByName(activeAccounts, input.accountName)
-      if (!acc) return NextResponse.json({ message: `Не нашёл счёт «${input.accountName}». Есть: ${accNames}.` })
-      const cats = toolUse.name === 'add_expense' ? expenseCats : incomeCats
-      const cat = findByName(cats, input.category)
-      const { txn } = await createTxn(user.userId, {
-        accountId: acc.id, type: toolUse.name === 'add_expense' ? 'expense' : 'income',
-        amount: Number(input.amount), category: cat?.id ?? '', comment: input.comment ?? '',
-      })
-      const verb = toolUse.name === 'add_expense' ? 'Расход' : 'Доход'
-      return NextResponse.json({
-        message: `✓ ${verb} ${txn.amount} ${acc.currency} · ${acc.name}${cat ? ' · ' + cat.name : ''}`,
-        action: toolUse.name, spaceId,
-      })
-    }
-
-    if (toolUse.name === 'add_transfer') {
-      if (activeAccounts.length === 0) return NextResponse.json({ message: 'Сначала добавьте счёт в разделе «Финансы».' })
-      const from = findByName(activeAccounts, input.fromAccountName)
-      const to = findByName(activeAccounts, input.toAccountName)
-      if (!from || !to) return NextResponse.json({ message: `Не нашёл счёт(а). Есть: ${accNames}.` })
-      const txn = await createTransfer(user.userId, { fromAccountId: from.id, toAccountId: to.id, amount: Number(input.amount) })
-      return NextResponse.json({
-        message: `✓ Перевод ${txn.amount} ${from.currency} · ${from.name} → ${to.name}`,
-        action: 'add_transfer', spaceId,
-      })
-    }
-
-    if (toolUse.name === 'add_event') {
-      const ev = await createEvent(user.userId, { day: input.date, time: input.time || undefined, title: input.title })
-      return NextResponse.json({
-        message: `✓ ${ev.title} · ${ev.day}${ev.time ? ' в ' + ev.time : ''}`,
-        action: 'add_event',
-      })
-    }
-
-    if (toolUse.name === 'mark_habit') {
-      if (activeHabits.length === 0) return NextResponse.json({ message: 'В трекере пока нет привычек.' })
-      const habit = findByName(activeHabits, input.habitName)
-      if (!habit) return NextResponse.json({ message: `Не нашёл привычку «${input.habitName}». Есть: ${habitNames}.` })
-      const { count, done } = await setCount(habit.id, user.userId, today, Number(input.count))
-      const progress = habit.targetPerDay > 1 ? ` (${count}/${habit.targetPerDay})` : ''
-      return NextResponse.json({
-        message: `✓ ${habit.emoji} ${habit.name}${progress} — ${done ? 'выполнено' : count > 0 ? 'записано' : 'отметка снята'}`,
-        action: 'mark_habit',
-      })
-    }
-
-    if (toolUse.name === 'add_task') {
-      let section = input.sectionName ? findByName(activeSections, input.sectionName) : null
-      if (!section) section = activeSections[0] ?? null
-      if (!section) section = await createSection('Входящие', user.userId)
-      const task = await createTask(section.id, input.title, user.userId)
-      if (!task) return NextResponse.json({ message: 'Не удалось добавить задачу.' })
-      if (input.dueDate) await updateTask(task.id, { dueDate: input.dueDate }, user.userId)
-      return NextResponse.json({
-        message: `✓ ${task.title} · ${section.name}${input.dueDate ? ' · до ' + input.dueDate : ''}`,
-        action: 'add_task',
-      })
-    }
-
-    if (toolUse.name === 'topup_deposit') {
-      if (depositAccounts.length === 0) return NextResponse.json({ message: 'В этом кабинете нет депозитов.' })
-      const acc = findByName(depositAccounts, input.accountName)
-      if (!acc) return NextResponse.json({ message: `Не нашёл депозит «${input.accountName}». Есть: ${depositNames}.` })
-      const principal = Math.round((acc.principal + Number(input.amount)) * 100) / 100
-      await updateAccount(acc.id, user.userId, { principal })
-      return NextResponse.json({
-        message: `✓ Депозит «${acc.name}» пополнен на ${formatMoney(Number(input.amount), acc.currency)}`,
-        action: 'topup_deposit', spaceId,
-      })
-    }
-
-    if (toolUse.name === 'accrue_interest') {
-      if (depositAccounts.length === 0) return NextResponse.json({ message: 'В этом кабинете нет депозитов.' })
-      const acc = findByName(depositAccounts, input.accountName)
-      if (!acc) return NextResponse.json({ message: `Не нашёл депозит «${input.accountName}». Есть: ${depositNames}.` })
-      const rate = depositValue(acc, today).currentRate
-      if (rate == null || acc.principal <= 0) return NextResponse.json({ message: `У депозита «${acc.name}» не задана ставка.` })
-      const interest = Math.round((acc.principal * rate / 1200) * 100) / 100
-      const principal = Math.round((acc.principal + interest) * 100) / 100
-      await updateAccount(acc.id, user.userId, { principal, startDate: today })
-      return NextResponse.json({
-        message: `✓ Начислено ${formatMoney(interest, acc.currency)} процентов на «${acc.name}»`,
-        action: 'accrue_interest', spaceId,
-      })
-    }
-
-    if (toolUse.name === 'get_balance') {
-      if (input.accountName) {
-        const acc = findByName(activeAccounts, input.accountName)
-        if (!acc) return NextResponse.json({ message: `Не нашёл счёт «${input.accountName}». Есть: ${accNames}.` })
-        return NextResponse.json({ message: `${acc.name}: ${formatMoney(accountValue(acc, today), acc.currency)}` })
+    // одна голосовая команда может описывать сразу несколько действий («в 5:30 молитва,
+    // в 7:00 начало работы») — Gemini в этом случае возвращает несколько function calls,
+    // выполняем их все по очереди (не параллельно — на случай изменений одного счёта).
+    const runOne = async (name: string, input: any): Promise<{ message: string; action?: string }> => {
+      if (name === 'ask_clarification') {
+        return { message: input.question }
       }
-      const { total, missing } = combinedTotal(activeAccounts, today, settings)
-      const suffix = missing.length ? ` (не учтено: ${missing.join(', ')} — нет курса)` : ''
-      return NextResponse.json({ message: `Всего в кабинете: ${formatMoney(total, settings.baseCurrency)}${suffix}` })
+
+      if (name === 'add_expense' || name === 'add_income') {
+        if (activeAccounts.length === 0) return { message: 'Сначала добавьте счёт в разделе «Финансы».' }
+        const acc = findByName(activeAccounts, input.accountName)
+        if (!acc) return { message: `Не нашёл счёт «${input.accountName}». Есть: ${accNames}.` }
+        const cats = name === 'add_expense' ? expenseCats : incomeCats
+        const cat = findByName(cats, input.category)
+        const { txn } = await createTxn(userId, {
+          accountId: acc.id, type: name === 'add_expense' ? 'expense' : 'income',
+          amount: Number(input.amount), category: cat?.id ?? '', comment: input.comment ?? '',
+        })
+        const verb = name === 'add_expense' ? 'Расход' : 'Доход'
+        return { message: `✓ ${verb} ${txn.amount} ${acc.currency} · ${acc.name}${cat ? ' · ' + cat.name : ''}`, action: name }
+      }
+
+      if (name === 'add_transfer') {
+        if (activeAccounts.length === 0) return { message: 'Сначала добавьте счёт в разделе «Финансы».' }
+        const from = findByName(activeAccounts, input.fromAccountName)
+        const to = findByName(activeAccounts, input.toAccountName)
+        if (!from || !to) return { message: `Не нашёл счёт(а). Есть: ${accNames}.` }
+        const txn = await createTransfer(userId, { fromAccountId: from.id, toAccountId: to.id, amount: Number(input.amount) })
+        return { message: `✓ Перевод ${txn.amount} ${from.currency} · ${from.name} → ${to.name}`, action: 'add_transfer' }
+      }
+
+      if (name === 'add_event') {
+        const ev = await createEvent(userId, { day: input.date, time: input.time || undefined, title: input.title })
+        return { message: `✓ ${ev.title} · ${ev.day}${ev.time ? ' в ' + ev.time : ''}`, action: 'add_event' }
+      }
+
+      if (name === 'mark_habit') {
+        if (activeHabits.length === 0) return { message: 'В трекере пока нет привычек.' }
+        const habit = findByName(activeHabits, input.habitName)
+        if (!habit) return { message: `Не нашёл привычку «${input.habitName}». Есть: ${habitNames}.` }
+        const { count, done } = await setCount(habit.id, userId, today, Number(input.count))
+        const progress = habit.targetPerDay > 1 ? ` (${count}/${habit.targetPerDay})` : ''
+        return { message: `✓ ${habit.emoji} ${habit.name}${progress} — ${done ? 'выполнено' : count > 0 ? 'записано' : 'отметка снята'}`, action: 'mark_habit' }
+      }
+
+      if (name === 'add_task') {
+        let section = input.sectionName ? findByName(activeSections, input.sectionName) : null
+        if (!section) section = activeSections[0] ?? null
+        if (!section) section = await createSection('Входящие', userId)
+        const task = await createTask(section.id, input.title, userId)
+        if (!task) return { message: 'Не удалось добавить задачу.' }
+        if (input.dueDate) await updateTask(task.id, { dueDate: input.dueDate }, userId)
+        return { message: `✓ ${task.title} · ${section.name}${input.dueDate ? ' · до ' + input.dueDate : ''}`, action: 'add_task' }
+      }
+
+      if (name === 'topup_deposit') {
+        if (depositAccounts.length === 0) return { message: 'В этом кабинете нет депозитов.' }
+        const acc = findByName(depositAccounts, input.accountName)
+        if (!acc) return { message: `Не нашёл депозит «${input.accountName}». Есть: ${depositNames}.` }
+        const principal = Math.round((acc.principal + Number(input.amount)) * 100) / 100
+        await updateAccount(acc.id, userId, { principal })
+        return { message: `✓ Депозит «${acc.name}» пополнен на ${formatMoney(Number(input.amount), acc.currency)}`, action: 'topup_deposit' }
+      }
+
+      if (name === 'accrue_interest') {
+        if (depositAccounts.length === 0) return { message: 'В этом кабинете нет депозитов.' }
+        const acc = findByName(depositAccounts, input.accountName)
+        if (!acc) return { message: `Не нашёл депозит «${input.accountName}». Есть: ${depositNames}.` }
+        const rate = depositValue(acc, today).currentRate
+        if (rate == null || acc.principal <= 0) return { message: `У депозита «${acc.name}» не задана ставка.` }
+        const interest = Math.round((acc.principal * rate / 1200) * 100) / 100
+        const principal = Math.round((acc.principal + interest) * 100) / 100
+        await updateAccount(acc.id, userId, { principal, startDate: today })
+        return { message: `✓ Начислено ${formatMoney(interest, acc.currency)} процентов на «${acc.name}»`, action: 'accrue_interest' }
+      }
+
+      if (name === 'get_balance') {
+        if (input.accountName) {
+          const acc = findByName(activeAccounts, input.accountName)
+          if (!acc) return { message: `Не нашёл счёт «${input.accountName}». Есть: ${accNames}.` }
+          return { message: `${acc.name}: ${formatMoney(accountValue(acc, today), acc.currency)}` }
+        }
+        const { total, missing } = combinedTotal(activeAccounts, today, settings)
+        const suffix = missing.length ? ` (не учтено: ${missing.join(', ')} — нет курса)` : ''
+        return { message: `Всего в кабинете: ${formatMoney(total, settings.baseCurrency)}${suffix}` }
+      }
+
+      return { message: 'Не удалось выполнить команду.' }
     }
 
-    return NextResponse.json({ message: 'Не удалось выполнить команду.' })
+    const results: { message: string; action?: string }[] = []
+    for (const c of calls) results.push(await runOne(c.name!, c.args as any))
+
+    return NextResponse.json({
+      message: results.map(r => r.message).join('\n'),
+      action: results.find(r => r.action)?.action,
+      spaceId,
+    })
   } catch (e) {
     console.error('POST /api/assistant error:', e)
     return NextResponse.json({ error: 'failed', message: 'Что-то пошло не так. Попробуйте ещё раз.' }, { status: 500 })
