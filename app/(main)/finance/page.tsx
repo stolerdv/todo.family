@@ -553,6 +553,43 @@ function ListView({ active, txns, settings, categories, budgets, accounts, credi
   const curOf = (id: string) => active.find(a => a.id === id)?.currency ?? ''
   const activeBudgets = budgets.map(b => ({ b, c: categories.find(c => c.id === b.categoryId) })).filter(x => x.c)
 
+  // ── операции: фильтр по категории, поиск, сортировка, экспорт в CSV ─────────
+  const [opFilter, setOpFilter] = useState('')
+  const [opSearch, setOpSearch] = useState('')
+  const [opSort, setOpSort] = useState<'new' | 'old'>('new')
+  const opCategoriesInUse = categories.filter(c => txns.some(t => t.category === c.id))
+  const opLabel = (t: Txn) => t.type === 'transfer' ? 'Перевод' : catInfo(t.category).label
+  const filteredTxns = txns
+    .filter(t => !opFilter || t.category === opFilter)
+    .filter(t => {
+      if (!opSearch.trim()) return true
+      const q = opSearch.trim().toLowerCase()
+      return t.comment.toLowerCase().includes(q) || opLabel(t).toLowerCase().includes(q)
+        || nameOf(t.accountId).toLowerCase().includes(q) || String(t.amount).includes(q)
+    })
+    .sort((a, b) => {
+      const cmp = a.day.localeCompare(b.day) || a.createdAt.localeCompare(b.createdAt)
+      return opSort === 'new' ? -cmp : cmp
+    })
+  const exportOpsCsv = () => {
+    const header = ['Дата', 'Тип', 'Сумма', 'Валюта', 'Категория', 'Счёт', 'Комментарий', 'Автор']
+    const typeLabel = (t: Txn) => t.type === 'expense' ? 'Расход' : t.type === 'income' ? 'Доход' : 'Перевод'
+    const rows = filteredTxns.map(t => [t.day, typeLabel(t), String(t.amount), curOf(t.accountId), opLabel(t), nameOf(t.accountId), t.comment, t.authorName])
+    const csv = [header, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n')
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = `операции_${today}.csv`; a.click()
+    URL.revokeObjectURL(url)
+  }
+  const opChip = (isActive: boolean): CSSProperties => ({
+    display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap', cursor: 'pointer', flex: '0 0 auto',
+    padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700,
+    background: isActive ? 'var(--tk-accent)' : 'var(--tk-card)',
+    color: isActive ? '#fff' : 'var(--tk-muted)',
+    border: `1px solid ${isActive ? 'var(--tk-accent)' : 'var(--tk-line)'}`,
+  })
+
   return (
     <>
       <div className="tk-page-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
@@ -670,9 +707,30 @@ function ListView({ active, txns, settings, categories, budgets, accounts, credi
 
       {txns.length > 0 && (
         <>
-          <div className="tk-section-label">Последние операции</div>
+          <div className="tk-section-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>Последние операции</span>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+              <button onClick={() => setOpSort(s => s === 'new' ? 'old' : 'new')} style={{ background: 'none', border: 'none', color: 'var(--tk-accent)', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>
+                {opSort === 'new' ? 'Сначала новые' : 'Сначала старые'}
+              </button>
+              <button onClick={exportOpsCsv} aria-label="Экспорт в CSV" style={{ background: 'none', border: 'none', color: 'var(--tk-accent)', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>⬇ CSV</button>
+            </div>
+          </div>
+          {opCategoriesInUse.length > 0 && (
+            <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 8, margin: '-2px 0 8px', WebkitOverflowScrolling: 'touch' }}>
+              <button style={opChip(opFilter === '')} onClick={() => setOpFilter('')}>Все</button>
+              {opCategoriesInUse.map(c => (
+                <button key={c.id} style={opChip(opFilter === c.id)} onClick={() => setOpFilter(c.id)}>{c.emoji} {c.name}</button>
+              ))}
+            </div>
+          )}
+          <div className="tk-field" style={{ marginBottom: 8 }}>
+            <input className="tk-input" placeholder="Поиск по операциям…" value={opSearch} onChange={e => setOpSearch(e.target.value)} />
+          </div>
           <div className="tk-block" style={{ padding: '6px 16px' }}>
-            {txns.slice(0, 30).map(t => <OpRow key={t.id} t={t} info={catInfo(t.category)} fromName={nameOf(t.accountId)} toName={t.toAccountId ? nameOf(t.toAccountId) : ''} currency={curOf(t.accountId)} onDelete={onDeleteOp} onEdit={onEditOp} />)}
+            {filteredTxns.length === 0
+              ? <p className="tk-hint" style={{ padding: '10px 0' }}>Ничего не найдено.</p>
+              : filteredTxns.slice(0, 30).map(t => <OpRow key={t.id} t={t} info={catInfo(t.category)} fromName={nameOf(t.accountId)} toName={t.toAccountId ? nameOf(t.toAccountId) : ''} currency={curOf(t.accountId)} onDelete={onDeleteOp} onEdit={onEditOp} />)}
           </div>
         </>
       )}
