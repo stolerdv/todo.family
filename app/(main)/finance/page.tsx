@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useMemo, useCallback, type CSSProperties } from 'react'
-import type { Account, DepositRate, Txn, TxnType, FinanceSettings, Category, Budget, Space, Credit, CreditKind, CreditDirection, CreditPayment } from '@/lib/finance'
+import type { Account, DepositRate, Txn, TxnType, FinanceSettings, Category, Budget, Space, Credit, CreditKind, CreditDirection, CreditPayment, OpTemplate } from '@/lib/finance'
 import { Dates } from '@/lib/trackerStats'
 import {
   accountValue, depositValue, effectiveRate, combinedTotal, currenciesInUse, convert, rebase,
@@ -34,6 +34,7 @@ export default function FinancePage() {
   const [categories, setCategories] = useState<Category[]>([])
   const [budgets, setBudgets] = useState<Budget[]>([])
   const [credits, setCredits] = useState<Credit[]>([])
+  const [templates, setTemplates] = useState<OpTemplate[]>([])
   const [loading, setLoading] = useState(true)
   const [view, setView] = useState<View>({ name: 'list' })
   const [modal, setModal] = useState<Modal>(null)
@@ -53,18 +54,20 @@ export default function FinancePage() {
   const loadData = useCallback(async (sid: string) => {
     const qs = `?spaceId=${sid}`
     // курсы валют глобальные (не привязаны к spaceId) — грузятся отдельно ниже
-    const [a, t, c, b, cr] = await Promise.all([
+    const [a, t, c, b, cr, tpl] = await Promise.all([
       fetch(`/api/finance/accounts${qs}`).then(r => r.json()),
       fetch(`/api/finance/txns${qs}`).then(r => r.json()),
       fetch(`/api/finance/categories${qs}`).then(r => r.json()),
       fetch(`/api/finance/budgets${qs}`).then(r => r.json()),
       fetch(`/api/finance/credits${qs}`).then(r => r.json()),
+      fetch(`/api/finance/templates${qs}`).then(r => r.json()),
     ])
     setAccounts(Array.isArray(a) ? a : [])
     setTxns(Array.isArray(t) ? t : [])
     setCategories(Array.isArray(c) ? c : [])
     setBudgets(Array.isArray(b) ? b : [])
     setCredits(Array.isArray(cr) ? cr : [])
+    setTemplates(Array.isArray(tpl) ? tpl : [])
   }, [])
 
   useEffect(() => {
@@ -295,6 +298,20 @@ export default function FinancePage() {
     await fetch(`/api/finance/categories/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, emoji }) })
   }, [])
 
+  // ── шаблоны операций (быстрые чипсы в форме «+ Новая операция») ─────────────
+  const saveTemplateFn = useCallback(async (t: { kind: 'expense' | 'income'; name: string; accountId: string; category: string; amount: number; comment: string }) => {
+    const res = await fetch('/api/finance/templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spaceId, ...t }) })
+    if (!res.ok) { showToast(res.status === 400 ? 'Достигнут лимит шаблонов (5)' : 'Не удалось сохранить шаблон'); return }
+    const created: OpTemplate = await res.json()
+    setTemplates(prev => [...prev, created])
+    showToast('Шаблон сохранён')
+  }, [spaceId, showToast])
+
+  const deleteTemplateFn = useCallback(async (id: string) => {
+    setTemplates(prev => prev.filter(t => t.id !== id))
+    await fetch(`/api/finance/templates/${id}`, { method: 'DELETE' })
+  }, [])
+
   const setBudget = useCallback(async (categoryId: string, amount: number) => {
     setBudgets(prev => {
       const rest = prev.filter(b => b.categoryId !== categoryId)
@@ -420,9 +437,9 @@ export default function FinancePage() {
       {modal === 'account' && <AccountSheet editing={editingAcc} today={today} onClose={() => { setModal(null); setEditingAcc(null) }} onSave={saveAccount} onDelete={deleteAccount} />}
       {modal === 'op' && (
         <OperationSheet
-          accounts={spendable} categories={categories} credits={credits} today={today}
+          accounts={spendable} categories={categories} credits={credits} today={today} templates={templates}
           onClose={() => setModal(null)} onSave={addOp} onTransfer={addTransfer} onAddAccount={() => openAccountSheet(null)}
-          onPayCredit={payCreditFn}
+          onPayCredit={payCreditFn} onSaveTemplate={saveTemplateFn} onDeleteTemplate={deleteTemplateFn}
         />
       )}
       {modal === 'menu' && <SettingsMenu onClose={() => setModal(null)} onReports={() => setModal('reports')} onRates={() => setModal('rates')} onCats={() => setModal('cats')} onBudgets={() => setModal('budgets')} onSpaces={() => setModal('space')} onCredits={() => { setModal(null); setView({ name: 'credits' }) }} />}
@@ -872,13 +889,15 @@ function DetailView({ acc, txns, today, catInfo, accountName, onBack, onEdit, on
 }
 
 // ── Быстрая операция ────────────────────────────────────────────────────────────
-function OperationSheet({ accounts, categories, credits, today, onClose, onSave, onTransfer, onAddAccount, onPayCredit }: {
-  accounts: Account[]; categories: Category[]; credits: Credit[]; today: string
+function OperationSheet({ accounts, categories, credits, today, templates, onClose, onSave, onTransfer, onAddAccount, onPayCredit, onSaveTemplate, onDeleteTemplate }: {
+  accounts: Account[]; categories: Category[]; credits: Credit[]; today: string; templates: OpTemplate[]
   onClose: () => void
   onSave: (d: { accountId: string; type: TxnType; amount: number; category: string; comment: string }) => void
   onTransfer: (d: { fromAccountId: string; toAccountId: string; amount: number; toAmount: number; comment: string }) => void
   onAddAccount: () => void
   onPayCredit: (c: Credit, d: { accountId: string | null; amount: number; day: string; comment: string; advanceNextPayment: boolean }) => void
+  onSaveTemplate: (t: { kind: 'expense' | 'income'; name: string; accountId: string; category: string; amount: number; comment: string }) => void
+  onDeleteTemplate: (id: string) => void
 }) {
   const [type, setType] = useState<TxnType | 'credit'>('expense')
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? '')
@@ -889,6 +908,8 @@ function OperationSheet({ accounts, categories, credits, today, onClose, onSave,
   const [comment, setComment] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [err, setErr] = useState('')
+  const [savingTemplate, setSavingTemplate] = useState(false)
+  const [templateName, setTemplateName] = useState('')
 
   const activeCredits = credits.filter(c => !c.archived)
   const [creditId, setCreditId] = useState('')
@@ -911,6 +932,15 @@ function OperationSheet({ accounts, categories, credits, today, onClose, onSave,
     const matching = accounts.filter(a => a.currency === c.currency)
     setCreditAccountId((matching.length ? matching : accounts)[0]?.id ?? null)
   }
+
+  const templatesOfType = templates.filter(t => t.kind === type)
+  const applyTemplate = (t: OpTemplate) => {
+    setAccountId(accounts.some(a => a.id === t.accountId) ? t.accountId : accounts[0]?.id ?? '')
+    setCategory(t.category)
+    setAmount(String(t.amount))
+    setComment(t.comment)
+  }
+  const canSaveTemplate = (type === 'expense' || type === 'income') && !!accountId && parseMoney(amount) > 0 && templatesOfType.length < 5
 
   // защита от двойной отправки — повторные тапы до ответа сервера дублировали операцию
   const submit = () => {
@@ -1034,6 +1064,23 @@ function OperationSheet({ accounts, categories, credits, today, onClose, onSave,
           </>
         ) : (
           <>
+            {templatesOfType.length > 0 && (
+              <div className="tk-field">
+                <label>Шаблоны</label>
+                <div className="tk-emoji-picker">
+                  {templatesOfType.map(t => (
+                    <button key={t.id} type="button" className="tk-emoji-opt" style={{ width: 'auto', padding: '0 6px 0 12px', gap: 6, display: 'flex', alignItems: 'center', fontSize: 14, fontWeight: 600 }} onClick={() => applyTemplate(t)}>
+                      {t.name}
+                      <span
+                        role="button" aria-label={`Удалить шаблон «${t.name}»`}
+                        onClick={e => { e.stopPropagation(); onDeleteTemplate(t.id) }}
+                        style={{ color: 'var(--tk-faint)', padding: '4px 6px', fontSize: 13 }}
+                      >✕</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="tk-field"><label>{type === 'expense' ? 'Откуда' : 'Куда'}</label>{accountPicker(accountId, setAccountId)}</div>
             <div className="tk-field">
               <label>Сколько{from ? `, ${from.currency}` : ''}</label>
@@ -1050,6 +1097,24 @@ function OperationSheet({ accounts, categories, credits, today, onClose, onSave,
               </div>
             </div>
             <div className="tk-field"><label>Комментарий (необязательно)</label><input className="tk-input" maxLength={100} placeholder="Например: продукты на неделю" value={comment} onChange={e => setComment(e.target.value)} /></div>
+
+            {savingTemplate ? (
+              <div className="tk-field">
+                <label>Название шаблона</label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input className="tk-input" autoFocus maxLength={30} placeholder="Например: Такси" value={templateName} onChange={e => setTemplateName(e.target.value)} style={{ flex: 1 }} />
+                  <button type="button" className="tk-btn-primary" style={{ width: 'auto', padding: '0 16px' }} disabled={!templateName.trim()} onClick={() => {
+                    onSaveTemplate({ kind: type as 'expense' | 'income', name: templateName.trim(), accountId, category: category || (cats[0]?.id ?? ''), amount: parseMoney(amount), comment: comment.trim() })
+                    setSavingTemplate(false); setTemplateName('')
+                  }}>✓</button>
+                  <button type="button" className="tk-btn-ghost" style={{ width: 'auto', padding: '0 16px' }} onClick={() => { setSavingTemplate(false); setTemplateName('') }}>✕</button>
+                </div>
+              </div>
+            ) : canSaveTemplate && (
+              <button type="button" onClick={() => setSavingTemplate(true)} className="tk-hint" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--tk-accent)', textAlign: 'left', padding: 0, marginTop: -8, marginBottom: 8 }}>
+                ☆ Сохранить как шаблон
+              </button>
+            )}
           </>
         )}
 

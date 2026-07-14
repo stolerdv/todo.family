@@ -539,6 +539,51 @@ export async function setBudget(userId: string, categoryId: string, amount: numb
     ON CONFLICT (category_id) DO UPDATE SET amount = EXCLUDED.amount`
 }
 
+// ── Шаблоны операций ────────────────────────────────────────────────────────────
+// Быстрые чипсы в форме «+ Новая операция» для часто повторяющихся расход/доход —
+// не отдельный экран, максимум 5 на кабинет, чтобы не разрастаться.
+const MAX_TEMPLATES = 5
+
+export interface OpTemplate {
+  id: string
+  kind: 'expense' | 'income'
+  name: string
+  accountId: string
+  category: string
+  amount: number
+  comment: string
+}
+
+function mapTemplate(r: any): OpTemplate {
+  return { id: r.id, kind: r.kind, name: r.name, accountId: r.account_id, category: r.category ?? '', amount: Number(r.amount), comment: r.comment ?? '' }
+}
+
+export async function getTemplates(spaceId: string, userId: string): Promise<OpTemplate[]> {
+  if (!(await isMember(spaceId, userId))) return []
+  const rows = await sql()`
+    SELECT id, kind, name, account_id, category, amount::float8 AS amount, comment
+    FROM finance_templates WHERE space_id = ${spaceId} ORDER BY sort_order, created_at`
+  return (rows as any[]).map(mapTemplate)
+}
+
+export interface TemplateInput { kind: 'expense' | 'income'; name: string; accountId: string; category: string; amount: number; comment?: string }
+
+export async function createTemplate(spaceId: string, userId: string, t: TemplateInput): Promise<OpTemplate> {
+  if (!(await isMember(spaceId, userId))) throw new Error('not found')
+  const count = await sql()`SELECT count(*)::int AS n FROM finance_templates WHERE space_id = ${spaceId}`
+  if ((count[0] as any).n >= MAX_TEMPLATES) throw new Error('limit')
+  const rows = await sql()`
+    INSERT INTO finance_templates (space_id, user_id, kind, name, account_id, category, amount, comment, sort_order)
+    VALUES (${spaceId}, ${userId}, ${t.kind}, ${t.name}, ${t.accountId}, ${t.category}, ${t.amount}, ${t.comment ?? ''},
+      (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM finance_templates WHERE space_id = ${spaceId}))
+    RETURNING id, kind, name, account_id, category, amount::float8 AS amount, comment`
+  return mapTemplate(rows[0])
+}
+
+export async function deleteTemplate(id: string, userId: string): Promise<void> {
+  await sql()`DELETE FROM finance_templates t USING finance_space_members m WHERE t.id = ${id} AND m.space_id = t.space_id AND m.user_id = ${userId}`
+}
+
 // ── Кредиты / долги / рассрочки ────────────────────────────────────────────────
 // direction осмыслен для kind='debt': 'owe' — я должен (платёж списывается со счёта),
 // 'owed' — мне должны (платёж зачисляется на счёт). Кредит/рассрочка всегда 'owe'.
