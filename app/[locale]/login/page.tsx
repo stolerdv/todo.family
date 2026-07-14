@@ -1,11 +1,15 @@
 'use client'
 
 import { useRef, useState } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
-import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
+import { useTranslations } from 'next-intl'
 import { Suspense } from 'react'
+import { Link, useRouter } from '@/i18n/navigation'
 
 function LoginForm() {
+  const tr = useTranslations('auth.login')
+  const trErr = useTranslations('auth.errors')
+  const trCommon = useTranslations('common')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const usernameRef = useRef<HTMLInputElement>(null)
@@ -31,11 +35,11 @@ function LoginForm() {
         router.push(next)
       } else {
         const data = await res.json()
-        setError(data.error ?? 'Ошибка входа')
+        setError(data.error ?? trErr('login'))
         setLoading(false)
       }
     } catch {
-      setError('Ошибка соединения')
+      setError(trErr('connection'))
       setLoading(false)
     }
   }
@@ -50,12 +54,12 @@ function LoginForm() {
         <div className="text-center mb-2">
           <img src="/icon-192.png" alt="Pen" className="w-14 h-14 mx-auto mb-3 rounded-[16px]" style={{ boxShadow: '0 8px 24px -8px rgba(255,122,26,.5)' }} />
           <h1 className="text-3xl font-bold tracking-[0.35em] pl-[0.35em] text-white">Pen</h1>
-          <p className="text-[11px] text-[#ff7a1a]/80 tracking-[0.25em] uppercase mt-1.5">Организация жизни</p>
+          <p className="text-[11px] text-[#ff7a1a]/80 tracking-[0.25em] uppercase mt-1.5">{trCommon('tagline')}</p>
         </div>
         <input
           ref={usernameRef}
           type="text"
-          placeholder="Логин"
+          placeholder={tr('usernamePlaceholder')}
           autoFocus
           autoComplete="username"
           className="bg-white/[0.04] border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 outline-none transition focus:border-[#ff7a1a] focus:bg-white/[0.06]"
@@ -63,7 +67,7 @@ function LoginForm() {
         <input
           ref={passwordRef}
           type="password"
-          placeholder="Пароль"
+          placeholder={tr('passwordPlaceholder')}
           autoComplete="current-password"
           className="bg-white/[0.04] border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 outline-none transition focus:border-[#ff7a1a] focus:bg-white/[0.06]"
         />
@@ -74,12 +78,12 @@ function LoginForm() {
           className="rounded-xl py-3 text-sm font-bold text-[#120a00] transition active:scale-[.98] disabled:opacity-40"
           style={{ background: 'linear-gradient(135deg, #ffa04d, #ff7a1a)', boxShadow: '0 10px 30px -8px rgba(255,122,26,.55)' }}
         >
-          {loading ? 'Вход...' : 'Войти'}
+          {loading ? tr('submitting') : tr('submit')}
         </button>
         <p className="text-center text-sm text-gray-500">
-          Нет аккаунта?{' '}
+          {tr('noAccount')}{' '}
           <Link href="/register" className="text-[#ff7a1a] hover:text-[#ffa04d] transition font-medium">
-            Зарегистрироваться
+            {tr('registerLink')}
           </Link>
         </p>
       </form>

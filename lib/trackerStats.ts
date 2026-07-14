@@ -2,6 +2,8 @@ import type { Habit, Schedule } from './tracker'
 
 const DAY = 86400000
 
+type Translator = (key: string, values?: Record<string, any>) => string
+
 // Привычка с быстрым доступом к отметкам (Set вместо массива)
 export interface HabitCalc {
   id: string
@@ -56,15 +58,13 @@ export const Dates = {
     return Dates.addDays(key, -Dates.weekday(key))
   },
 
-  human(key: string): string {
-    return Dates.parse(key).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })
+  human(key: string, locale: string = 'ru-RU'): string {
+    return Dates.parse(key).toLocaleDateString(locale, { day: 'numeric', month: 'long', year: 'numeric' })
   },
 
-  humanShort(key: string): string {
-    return Dates.parse(key).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })
+  humanShort(key: string, locale: string = 'ru-RU'): string {
+    return Dates.parse(key).toLocaleDateString(locale, { day: 'numeric', month: 'short' })
   },
-
-  weekdayNames: ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'] as const,
 }
 
 export interface HeatCell {
@@ -81,14 +81,14 @@ export const Stats = {
     return true
   },
 
-  scheduleLabel(h: HabitCalc): string {
+  scheduleLabel(h: HabitCalc, tr: Translator): string {
     const s = h.schedule || { type: 'daily' }
-    if (s.type === 'daily') return 'Каждый день'
-    if (s.type === 'count') return `${s.perWeek} ${plural(s.perWeek, 'раз', 'раза', 'раз')} в неделю`
+    if (s.type === 'daily') return tr('everyDay')
+    if (s.type === 'count') return tr('perWeekFull', { count: s.perWeek })
     if (s.type === 'weekdays') {
       const days = (s.days || []).slice().sort((a, b) => a - b)
-      if (days.length === 7) return 'Каждый день'
-      return days.map(d => Dates.weekdayNames[d]).join(', ')
+      if (days.length === 7) return tr('everyDay')
+      return days.map(d => tr(`weekdayShort.${d}`)).join(', ')
     }
     return ''
   },
@@ -279,13 +279,6 @@ function earliest(h: HabitCalc): string {
   let min = h.startDate
   h.done.forEach(k => { if (k < min) min = k })
   return min
-}
-
-export function plural(n: number, one: string, few: string, many: string): string {
-  const m10 = n % 10, m100 = n % 100
-  if (m10 === 1 && m100 !== 11) return one
-  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few
-  return many
 }
 
 export function hexA(hex: string, a: number): string {

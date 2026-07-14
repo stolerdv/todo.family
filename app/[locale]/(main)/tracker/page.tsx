@@ -1,8 +1,11 @@
 'use client'
 
 import { useState, useEffect, useMemo, useCallback, type CSSProperties } from 'react'
+import { useTranslations, useLocale } from 'next-intl'
 import type { Habit, Schedule } from '@/lib/tracker'
-import { Dates, Stats, toCalc, plural, hexA, type HabitCalc } from '@/lib/trackerStats'
+import { Dates, Stats, toCalc, hexA, type HabitCalc } from '@/lib/trackerStats'
+import { toIntlLocale } from '@/lib/intlLocale'
+import type { Locale } from '@/i18n/routing'
 import './tracker.css'
 
 const EMOJIS = ['✅','💪','🏃','📚','💧','🧘','🛌','🥗','☀️','🚭','🧠','✍️','🎯','🎸','💊','🦷','🚶','🏊','🚴','🍎','☕','🌿','📵','💰','🧹','❤️','🙏','🎨','🇬🇧','⏰']
@@ -31,6 +34,7 @@ function Ring({ percent, size = 64, color = 'var(--tk-good)', label }: { percent
 const Check = () => <svg viewBox="0 0 24 24"><path d="M5 12l4 4 10-10" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/></svg>
 
 export default function TrackerPage() {
+  const tr = useTranslations('tracker')
   const [habits, setHabits] = useState<Habit[]>([])
   const [loading, setLoading] = useState(true)
   const [view, setView] = useState<View>({ name: 'today' })
@@ -81,10 +85,10 @@ export default function TrackerPage() {
         body: JSON.stringify({ habitId: h.id, day, count: next }),
       })
     } catch {
-      showToast('Нет сети — не сохранилось')
+      showToast(tr('toasts.offline'))
       setHabits(prev => prev.map(x => x.id === h.id ? apply(x, cur) : x))
     }
-  }, [showToast])
+  }, [showToast, tr])
 
   const saveHabit = useCallback(async (data: any, editing: Habit | null) => {
     if (editing) {
@@ -92,7 +96,7 @@ export default function TrackerPage() {
       await fetch(`/api/tracker/habits/${editing.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
       })
-      showToast('Сохранено')
+      showToast(tr('toasts.saved'))
     } else {
       const res = await fetch('/api/tracker/habits', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
@@ -100,19 +104,19 @@ export default function TrackerPage() {
       const created: Habit = await res.json()
       created.completions = created.completions || []
       setHabits(prev => [...prev, created])
-      showToast('Привычка создана 🎉')
+      showToast(tr('toasts.created'))
     }
     setSheet({ open: false, editing: null })
-  }, [showToast])
+  }, [showToast, tr])
 
   const archiveHabit = useCallback(async (h: Habit, archived: boolean) => {
     setHabits(prev => prev.map(x => x.id === h.id ? { ...x, archived } : x))
     await fetch(`/api/tracker/habits/${h.id}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ archived }),
     })
-    showToast(archived ? 'Привычка завершена 📦' : 'Возвращена')
+    showToast(archived ? tr('toasts.archived') : tr('toasts.restored'))
     if (archived) setView({ name: 'today' })
-  }, [showToast])
+  }, [showToast, tr])
 
   // подтверждение — в UI (двойной тап), а не через confirm() (в установленном PWA он не всплывает)
   const deleteHabit = useCallback(async (h: Habit) => {
@@ -120,8 +124,8 @@ export default function TrackerPage() {
     await fetch(`/api/tracker/habits/${h.id}`, { method: 'DELETE' })
     setSheet({ open: false, editing: null })
     setView({ name: 'today' })
-    showToast('Удалено')
-  }, [showToast])
+    showToast(tr('toasts.deleted'))
+  }, [showToast, tr])
 
   // ── рендер ───────────────────────────────────────────────────────────────────
   return (
@@ -130,8 +134,8 @@ export default function TrackerPage() {
         <main className="tk-view">
           {view.name !== 'detail' && (
             <div className="tk-subtabs">
-              <button className={view.name === 'today' ? 'sel' : ''} onClick={() => setView({ name: 'today' })}>Сегодня</button>
-              <button className={view.name === 'stats' ? 'sel' : ''} onClick={() => setView({ name: 'stats' })}>Статистика</button>
+              <button className={view.name === 'today' ? 'sel' : ''} onClick={() => setView({ name: 'today' })}>{tr('todayTab')}</button>
+              <button className={view.name === 'stats' ? 'sel' : ''} onClick={() => setView({ name: 'stats' })}>{tr('statsTab')}</button>
             </div>
           )}
           {view.name === 'today' && <TodayView habits={active} calc={calc} today={today} onToggle={toggle} onOpen={id => setView({ name: 'detail', id, back: 'today' })} onAdd={() => setSheet({ open: true, editing: null })} />}
@@ -151,7 +155,7 @@ export default function TrackerPage() {
       )}
 
       {!loading && view.name !== 'detail' && active.length > 0 && (
-        <button className="tk-fab" onClick={() => setSheet({ open: true, editing: null })} aria-label="Новая привычка">+</button>
+        <button className="tk-fab" onClick={() => setSheet({ open: true, editing: null })} aria-label={tr('newHabit')}>+</button>
       )}
 
       {sheet.open && (
@@ -206,16 +210,18 @@ function TodayView({ habits, calc, today, onToggle, onOpen, onAdd }: {
   habits: Habit[]; calc: Record<string, HabitCalc>; today: string
   onToggle: (h: Habit, day: string) => void; onOpen: (id: string) => void; onAdd: () => void
 }) {
-  const dateStr = Dates.parse(today).toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' })
+  const tr = useTranslations('tracker')
+  const locale = useLocale()
+  const dateStr = Dates.parse(today).toLocaleDateString(toIntlLocale(locale as Locale), { weekday: 'long', day: 'numeric', month: 'long' })
   if (!habits.length) {
     return (
       <>
         <div className="tk-page-head" style={{ marginBottom: 10 }}><div className="tk-page-date">{dateStr}</div></div>
         <div className="tk-empty">
           <div className="tk-em">🌱</div>
-          <h3>Начни первую привычку</h3>
-          <p>Добавь то, что хочешь делать регулярно — и просто ставь галочку каждый день.</p>
-          <button className="tk-btn-primary" onClick={onAdd}>+ Новая привычка</button>
+          <h3>{tr('emptyTitle')}</h3>
+          <p>{tr('emptyBody')}</p>
+          <button className="tk-btn-primary" onClick={onAdd}>+ {tr('newHabit')}</button>
         </div>
       </>
     )
@@ -227,17 +233,17 @@ function TodayView({ habits, calc, today, onToggle, onOpen, onAdd }: {
   const allDone = sum.due > 0 && sum.done === sum.due
   return (
     <>
-      <div className="tk-page-head"><div className="tk-page-date">{dateStr}</div><h1 className="tk-page-title">Сегодня</h1></div>
+      <div className="tk-page-head"><div className="tk-page-date">{dateStr}</div><h1 className="tk-page-title">{tr('todayTab')}</h1></div>
       <div className="tk-day-progress">
         <Ring percent={pct} color={allDone ? 'var(--tk-good)' : 'var(--tk-accent)'} />
         <div className="tk-txt">
-          <div className="tk-big">{allDone ? 'Всё готово 🎉' : `${sum.done} из ${sum.due}`}</div>
-          <div className="tk-small">{allDone ? 'Отличная работа сегодня!' : sum.due ? 'привычек выполнено сегодня' : 'на сегодня ничего не запланировано'}</div>
+          <div className="tk-big">{allDone ? tr('allDoneBig') : tr('progressOfTotal', { done: sum.done, due: sum.due })}</div>
+          <div className="tk-small">{allDone ? tr('allDoneSmall') : sum.due ? tr('dueCaption') : tr('noneScheduledCaption')}</div>
         </div>
       </div>
       <div className="tk-list">{due.map(h => <HabitRow key={h.id} h={h} hc={calc[h.id]} today={today} onToggle={onToggle} onOpen={onOpen} />)}</div>
       {rest.length > 0 && <>
-        <div className="tk-section-label">На другие дни</div>
+        <div className="tk-section-label">{tr('otherDaysLabel')}</div>
         <div className="tk-list">{rest.map(h => <HabitRow key={h.id} h={h} hc={calc[h.id]} today={today} onToggle={onToggle} onOpen={onOpen} notToday />)}</div>
       </>}
     </>
@@ -247,6 +253,7 @@ function TodayView({ habits, calc, today, onToggle, onOpen, onAdd }: {
 function HabitRow({ h, hc, today, onToggle, onOpen, notToday }: {
   h: Habit; hc: HabitCalc; today: string; onToggle: (h: Habit, day: string) => void; onOpen: (id: string) => void; notToday?: boolean
 }) {
+  const tr = useTranslations('tracker')
   const done = h.completions.includes(today)
   const streak = Stats.currentStreak(hc, today)
   const target = h.targetPerDay || 1
@@ -258,14 +265,14 @@ function HabitRow({ h, hc, today, onToggle, onOpen, notToday }: {
       <div className="tk-habit-main" onClick={() => onOpen(h.id)}>
         <div className="tk-habit-name">{h.name}</div>
         <div className="tk-habit-meta">
-          <span>{Stats.scheduleLabel(hc)}{multi ? ` · ${target} раза в день` : ''}</span>
+          <span>{Stats.scheduleLabel(hc, tr)}{multi ? ` · ${tr('timesPerDayCount', { count: target })}` : ''}</span>
           <span className={`tk-streak-chip ${streak ? '' : 'tk-zero'}`}>🔥 {streak}</span>
         </div>
       </div>
       <button
         className={`tk-check ${done ? '' : (multi ? 'tk-multi' : 'tk-pending')}`}
         onClick={() => onToggle(h, today)}
-        aria-label="Отметить"
+        aria-label={tr('markAria')}
         style={multi && !done ? ({ ['--p']: count / target, ['--ring']: ACCENT } as CSSProperties) : undefined}
       >
         {multi && !done
@@ -281,6 +288,10 @@ function DetailView({ habit, hc, today, onBack, onToggle, onEdit, onArchive }: {
   habit: Habit; hc: HabitCalc; today: string
   onBack: () => void; onToggle: (h: Habit, day: string) => void; onEdit: (h: Habit) => void; onArchive: (h: Habit) => void
 }) {
+  const tr = useTranslations('tracker')
+  const trCommon = useTranslations('common')
+  const locale = useLocale()
+  const intlLocale = toIntlLocale(locale as Locale)
   const cur = Stats.currentStreak(hc, today)
   const best = Stats.bestStreak(hc, today)
   const rate = Stats.completionRate(hc, today)
@@ -296,13 +307,13 @@ function DetailView({ habit, hc, today, onBack, onToggle, onEdit, onArchive }: {
     <>
       <button className="tk-back" onClick={onBack}>
         <svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-        Назад
+        {trCommon('back')}
       </button>
       <div className="tk-detail-hero">
         <div className="tk-emoji" style={{ background: hexA(ACCENT, .16), color: ACCENT }}>{habit.emoji}</div>
         <div>
           <h1>{habit.name}</h1>
-          <div className="tk-sub">{Stats.scheduleLabel(hc)} · с {Dates.humanShort(habit.startDate)}</div>
+          <div className="tk-sub">{Stats.scheduleLabel(hc, tr)} · {tr('sinceLabel', { date: Dates.humanShort(habit.startDate, intlLocale) })}</div>
         </div>
       </div>
 
@@ -312,31 +323,31 @@ function DetailView({ habit, hc, today, onBack, onToggle, onEdit, onArchive }: {
         if (target > 1) {
           return (
             <button className={done ? 'tk-btn-ghost' : 'tk-btn-primary'} style={{ marginBottom: 20 }} onClick={() => onToggle(habit, today)}>
-              {done ? `✓ Сегодня ${target}/${target} — сбросить` : `Отметить за сегодня · ${count}/${target}`}
+              {done ? tr('doneTodayMulti', { target }) : tr('markTodayMulti', { count, target })}
             </button>
           )
         }
         return (
           <button className={done ? 'tk-btn-ghost' : 'tk-btn-primary'} style={{ marginBottom: 20 }} onClick={() => onToggle(habit, today)}>
-            {done ? '✓ Сделано сегодня — отменить' : 'Отметить за сегодня'}
+            {done ? tr('doneTodaySingle') : tr('markTodaySingle')}
           </button>
         )
       })()}
 
       <div className={`tk-desc-card ${habit.description ? '' : 'tk-empty-desc'}`}>
-        {habit.description || 'Описание не заполнено. Нажми «Изменить», чтобы добавить — зачем эта привычка, как её выполнять.'}
+        {habit.description || tr('noDescription')}
       </div>
 
       <div className="tk-stat-grid">
-        <div className="tk-stat-card tk-flame"><div className="tk-k">🔥 Текущая серия</div><div className="tk-v">{cur} <small>{plural(cur,'день','дня','дней')}</small></div></div>
-        <div className="tk-stat-card"><div className="tk-k">🏆 Рекорд</div><div className="tk-v">{best} <small>{plural(best,'день','дня','дней')}</small></div></div>
-        <div className="tk-stat-card"><div className="tk-k">🎯 Выполнение</div><div className="tk-v">{rate}<small>%</small></div></div>
-        <div className="tk-stat-card"><div className="tk-k">✅ Всего</div><div className="tk-v">{total}</div></div>
+        <div className="tk-stat-card tk-flame"><div className="tk-k">{tr('currentStreakLabel')}</div><div className="tk-v">{cur} <small>{tr('daysUnit', { count: cur })}</small></div></div>
+        <div className="tk-stat-card"><div className="tk-k">{tr('recordLabel')}</div><div className="tk-v">{best} <small>{tr('daysUnit', { count: best })}</small></div></div>
+        <div className="tk-stat-card"><div className="tk-k">{tr('completionRateLabel')}</div><div className="tk-v">{rate}<small>%</small></div></div>
+        <div className="tk-stat-card"><div className="tk-k">{tr('totalDoneLabel')}</div><div className="tk-v">{total}</div></div>
       </div>
 
       <div className="tk-block">
-        <h3>Активность</h3>
-        <p className="tk-hint">Последние ~4 месяца. Ярче — выполнено.</p>
+        <h3>{tr('activityTitle')}</h3>
+        <p className="tk-hint">{tr('activityHint')}</p>
         <div className="tk-heat">
           {cells.map((c, i) => {
             let bg = 'var(--tk-card-2)'
@@ -347,35 +358,35 @@ function DetailView({ habit, hc, today, onBack, onToggle, onEdit, onArchive }: {
           })}
         </div>
         <div className="tk-heat-legend">
-          <span>меньше</span>
+          <span>{tr('less')}</span>
           <div className="tk-cells">
             <div className="tk-heat-cell" style={{ background: 'var(--tk-card-2)' }} />
             <div className="tk-heat-cell" style={{ background: hexA(ACCENT, .4) }} />
             <div className="tk-heat-cell" style={{ background: ACCENT }} />
           </div>
-          <span>больше</span>
+          <span>{tr('more')}</span>
         </div>
       </div>
 
       <div className="tk-block">
-        <h3>По неделям</h3>
-        <p className="tk-hint">Сколько раз выполнено за каждую из последних недель.</p>
+        <h3>{tr('byWeeksTitle')}</h3>
+        <p className="tk-hint">{tr('byWeeksHint')}</p>
         {weeks.length ? (
           <div className="tk-bars">
             {weeks.map((w, i) => (
               <div key={i} className="tk-bar-col">
                 <div className="tk-bar-val">{w.count || ''}</div>
                 <div className="tk-bar" style={{ height: `${(w.count / maxBar) * 100}%`, background: `linear-gradient(180deg, ${ACCENT}, ${hexA(ACCENT, .5)})` }} />
-                <div className="tk-bar-lbl">{Dates.humanShort(w.weekStart)}</div>
+                <div className="tk-bar-lbl">{Dates.humanShort(w.weekStart, intlLocale)}</div>
               </div>
             ))}
           </div>
-        ) : <p className="tk-hint">Пока нет данных.</p>}
+        ) : <p className="tk-hint">{tr('noDataYet')}</p>}
       </div>
 
       <div className="tk-sheet-actions" style={{ marginTop: 24 }}>
-        <button className="tk-btn-ghost" onClick={() => onEdit(habit)}>✏️ Изменить</button>
-        <button className="tk-btn-ghost" onClick={() => onArchive(habit)}>📦 Завершить привычку</button>
+        <button className="tk-btn-ghost" onClick={() => onEdit(habit)}>✏️ {trCommon('edit')}</button>
+        <button className="tk-btn-ghost" onClick={() => onArchive(habit)}>📦 {tr('archiveBtn')}</button>
       </div>
     </>
   )
@@ -385,19 +396,21 @@ function DetailView({ habit, hc, today, onBack, onToggle, onEdit, onArchive }: {
 function ArchivedRow({ hc, today, onOpen, onRestore, onDelete }: {
   hc: HabitCalc; today: string; onOpen: (id: string) => void; onRestore: (h: Habit) => void; onDelete: (h: Habit) => void
 }) {
+  const tr = useTranslations('tracker')
+  const trCommon = useTranslations('common')
   const [confirmDel, setConfirmDel] = useState(false)
   return (
     <div className="tk-rank-row">
       <div className="tk-emoji" style={{ background: 'var(--tk-card-2)', color: 'var(--tk-muted)' }}>{hc.emoji}</div>
-      <div className="tk-nm" onClick={() => onOpen(hc.id)}><b>{hc.name}</b><span>Рекорд: 🔥 {Stats.bestStreak(hc, today)} · {Stats.totalDone(hc)} отметок</span></div>
+      <div className="tk-nm" onClick={() => onOpen(hc.id)}><b>{hc.name}</b><span>{tr('archivedStats', { best: Stats.bestStreak(hc, today), total: Stats.totalDone(hc) })}</span></div>
       {confirmDel ? (
         <button className="tk-pct" style={{ color: 'var(--tk-danger)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}
-          onClick={() => onDelete({ id: hc.id } as Habit)}>Точно?</button>
+          onClick={() => onDelete({ id: hc.id } as Habit)}>{tr('confirmShort')}</button>
       ) : (
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           <button className="tk-pct" style={{ color: 'var(--tk-accent)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 14 }}
-            onClick={() => onRestore({ id: hc.id } as Habit)}>Вернуть</button>
-          <button aria-label="Удалить" style={{ color: 'var(--tk-faint)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, padding: '0 2px' }}
+            onClick={() => onRestore({ id: hc.id } as Habit)}>{tr('restore')}</button>
+          <button aria-label={trCommon('delete')} style={{ color: 'var(--tk-faint)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 15, padding: '0 2px' }}
             onClick={() => setConfirmDel(true)}>🗑</button>
         </div>
       )}
@@ -410,15 +423,16 @@ function StatsView({ active, calc, today, onOpen, onAdd, onRestore, onDelete }: 
   active: Habit[]; calc: Record<string, HabitCalc>; today: string
   onOpen: (id: string) => void; onAdd: () => void; onRestore: (h: Habit) => void; onDelete: (h: Habit) => void
 }) {
+  const tr = useTranslations('tracker')
   const activeCalc = active.map(h => calc[h.id])
   const archivedList = Object.values(calc).filter(hc => hc.archived)
 
   if (!active.length && !archivedList.length) {
     return (
       <>
-        <div className="tk-page-head"><h1 className="tk-page-title">Статистика</h1></div>
-        <div className="tk-empty"><div className="tk-em">📊</div><h3>Пока пусто</h3><p>Добавь привычки и отмечай их — здесь появятся серии и графики.</p>
-          <button className="tk-btn-primary" onClick={onAdd}>+ Новая привычка</button></div>
+        <div className="tk-page-head"><h1 className="tk-page-title">{tr('statsTab')}</h1></div>
+        <div className="tk-empty"><div className="tk-em">📊</div><h3>{tr('emptyStatsTitle')}</h3><p>{tr('emptyStatsBody')}</p>
+          <button className="tk-btn-primary" onClick={onAdd}>+ {tr('newHabit')}</button></div>
       </>
     )
   }
@@ -432,27 +446,27 @@ function StatsView({ active, calc, today, onOpen, onAdd, onRestore, onDelete }: 
   return (
     <>
       <div className="tk-page-head" style={{ marginBottom: 14 }}>
-        <div className="tk-page-sub" style={{ marginTop: 0 }}>{active.length} {plural(active.length,'привычка','привычки','привычек')} · {totalDone} отметок всего</div>
+        <div className="tk-page-sub" style={{ marginTop: 0 }}>{tr('habitsCountLine', { count: active.length, total: totalDone })}</div>
       </div>
 
       <div className="tk-stat-grid">
-        <div className="tk-stat-card tk-flame"><div className="tk-k">🔥 Серия без пропусков</div><div className="tk-v">{g.current} <small>{plural(g.current,'день','дня','дней')}</small></div></div>
-        <div className="tk-stat-card"><div className="tk-k">🏆 Рекорд серии</div><div className="tk-v">{g.best} <small>{plural(g.best,'день','дня','дней')}</small></div></div>
-        <div className="tk-stat-card"><div className="tk-k">📅 Сегодня</div><div className="tk-v">{sum.done}<small>/{sum.due}</small></div></div>
-        <div className="tk-stat-card"><div className="tk-k">✅ Всего отметок</div><div className="tk-v">{totalDone}</div></div>
+        <div className="tk-stat-card tk-flame"><div className="tk-k">{tr('globalStreakLabel')}</div><div className="tk-v">{g.current} <small>{tr('daysUnit', { count: g.current })}</small></div></div>
+        <div className="tk-stat-card"><div className="tk-k">{tr('bestStreakLabel')}</div><div className="tk-v">{g.best} <small>{tr('daysUnit', { count: g.best })}</small></div></div>
+        <div className="tk-stat-card"><div className="tk-k">{tr('todayLabel')}</div><div className="tk-v">{sum.done}<small>/{sum.due}</small></div></div>
+        <div className="tk-stat-card"><div className="tk-k">{tr('totalMarksLabel')}</div><div className="tk-v">{totalDone}</div></div>
       </div>
-      <p className="tk-hint" style={{ margin: '-8px 4px 20px' }}>🔥 <b style={{ color: 'var(--tk-text)' }}>Серия без пропусков</b> — сколько дней подряд ты закрываешь все привычки, запланированные на день. Держишь темп — серия растёт.</p>
+      <p className="tk-hint" style={{ margin: '-8px 4px 20px' }}>🔥 <b style={{ color: 'var(--tk-text)' }}>{tr('globalStreakName')}</b> — {tr('globalStreakHint')}</p>
 
       {active.length > 0 && (
         <div className="tk-block">
-          <h3>Твои привычки</h3>
-          <p className="tk-hint">Отсортировано по текущей серии.</p>
+          <h3>{tr('yourHabits')}</h3>
+          <p className="tk-hint">{tr('sortedByStreak')}</p>
           {ranked.map(r => (
             <div key={r.h.id} className="tk-rank-row" onClick={() => onOpen(r.h.id)}>
               <div className="tk-emoji" style={{ background: hexA(ACCENT, .16), color: ACCENT }}>{r.h.emoji}</div>
               <div className="tk-nm">
                 <b>{r.h.name}</b>
-                <span>🔥 {r.streak} · {Stats.scheduleLabel(r.hc)}</span>
+                <span>🔥 {r.streak} · {Stats.scheduleLabel(r.hc, tr)}</span>
                 <div className="tk-mini-track"><div className="tk-mini-fill" style={{ width: `${r.rate}%`, background: ACCENT }} /></div>
               </div>
               <div className="tk-pct" style={{ color: ACCENT }}>{r.rate}%</div>
@@ -463,8 +477,8 @@ function StatsView({ active, calc, today, onOpen, onAdd, onRestore, onDelete }: 
 
       {archivedList.length > 0 && (
         <div className="tk-block">
-          <h3>Завершённые</h3>
-          <p className="tk-hint">Привычки, которые ты закончил. Память сохранена.</p>
+          <h3>{tr('archivedTitle')}</h3>
+          <p className="tk-hint">{tr('archivedHint')}</p>
           {archivedList.map(hc => (
             <ArchivedRow key={hc.id} hc={hc} today={today} onOpen={onOpen} onRestore={onRestore} onDelete={onDelete} />
           ))}
@@ -479,6 +493,8 @@ function HabitSheet({ editing, today, onClose, onSave, onDelete }: {
   editing: Habit | null; today: string
   onClose: () => void; onSave: (data: any, editing: Habit | null) => void; onDelete: (h: Habit) => void
 }) {
+  const tr = useTranslations('tracker')
+  const trCommon = useTranslations('common')
   const [name, setName] = useState(editing?.name ?? '')
   const [description, setDescription] = useState(editing?.description ?? '')
   const [emoji, setEmoji] = useState(editing?.emoji ?? '✅')
@@ -502,46 +518,46 @@ function HabitSheet({ editing, today, onClose, onSave, onDelete }: {
       <div className="tk-sheet-backdrop" onClick={onClose} />
       <div className="tk-sheet-card">
         <div className="tk-sheet-grab" />
-        <h2>{editing ? 'Изменить привычку' : 'Новая привычка'}</h2>
+        <h2>{editing ? tr('editHabitTitle') : tr('newHabit')}</h2>
 
         <div className="tk-field">
-          <label>Название (1–3 слова)</label>
-          <input className="tk-input" maxLength={30} placeholder="Например: Вода" value={name} onChange={e => setName(e.target.value)} />
+          <label>{tr('nameLabel')}</label>
+          <input className="tk-input" maxLength={30} placeholder={tr('namePlaceholder')} value={name} onChange={e => setName(e.target.value)} />
         </div>
 
         <div className="tk-field">
-          <label>Иконка</label>
+          <label>{tr('iconLabel')}</label>
           <div className="tk-emoji-picker">
             {EMOJIS.map(e => <button key={e} type="button" className={`tk-emoji-opt ${e === emoji ? 'tk-sel' : ''}`} onClick={() => setEmoji(e)}>{e}</button>)}
           </div>
         </div>
 
         <div className="tk-field">
-          <label>Как часто</label>
+          <label>{tr('frequencyLabel')}</label>
           <div className="tk-seg">
-            <button type="button" className={schedule.type === 'daily' ? 'tk-sel' : ''} onClick={() => setSchedule({ type: 'daily' })}>Каждый день</button>
-            <button type="button" className={schedule.type === 'weekdays' ? 'tk-sel' : ''} onClick={() => setSchedule({ type: 'weekdays', days: schedule.type === 'weekdays' ? schedule.days : [1,3,5] })}>Дни недели</button>
-            <button type="button" className={schedule.type === 'count' ? 'tk-sel' : ''} onClick={() => setSchedule({ type: 'count', perWeek: schedule.type === 'count' ? schedule.perWeek : 3 })}>N в неделю</button>
+            <button type="button" className={schedule.type === 'daily' ? 'tk-sel' : ''} onClick={() => setSchedule({ type: 'daily' })}>{tr('everyDay')}</button>
+            <button type="button" className={schedule.type === 'weekdays' ? 'tk-sel' : ''} onClick={() => setSchedule({ type: 'weekdays', days: schedule.type === 'weekdays' ? schedule.days : [1,3,5] })}>{tr('weekdaysOption')}</button>
+            <button type="button" className={schedule.type === 'count' ? 'tk-sel' : ''} onClick={() => setSchedule({ type: 'count', perWeek: schedule.type === 'count' ? schedule.perWeek : 3 })}>{tr('countPerWeekOption')}</button>
           </div>
         </div>
 
         <div className="tk-field">
-          <label>Сколько раз в день</label>
+          <label>{tr('timesPerDayLabel')}</label>
           <div className="tk-stepper">
             <button type="button" onClick={() => setTargetPerDay(Math.max(1, targetPerDay - 1))}>−</button>
             <span className="tk-val">{targetPerDay}</span>
             <button type="button" onClick={() => setTargetPerDay(Math.min(20, targetPerDay + 1))}>+</button>
-            <span className="tk-cap">{targetPerDay === 1 ? 'один раз' : `${targetPerDay} ${plural(targetPerDay,'раз','раза','раз')} в день`}</span>
+            <span className="tk-cap">{targetPerDay === 1 ? tr('onceLabel') : tr('timesPerDayCount', { count: targetPerDay })}</span>
           </div>
         </div>
 
         {schedule.type === 'weekdays' && (
           <div className="tk-field">
-            <label>В какие дни</label>
+            <label>{tr('whichDaysLabel')}</label>
             <div className="tk-weekdays">
-              {Dates.weekdayNames.map((n, i) => (
+              {[0, 1, 2, 3, 4, 5, 6].map(i => (
                 <button key={i} type="button" className={`tk-wd ${days.includes(i) ? 'tk-sel' : ''}`}
-                  onClick={() => setSchedule({ type: 'weekdays', days: days.includes(i) ? days.filter(d => d !== i) : [...days, i] })}>{n}</button>
+                  onClick={() => setSchedule({ type: 'weekdays', days: days.includes(i) ? days.filter(d => d !== i) : [...days, i] })}>{tr(`weekdayShort.${i}`)}</button>
               ))}
             </div>
           </div>
@@ -549,33 +565,33 @@ function HabitSheet({ editing, today, onClose, onSave, onDelete }: {
 
         {schedule.type === 'count' && (
           <div className="tk-field">
-            <label>Сколько раз в неделю</label>
+            <label>{tr('timesPerWeekLabel')}</label>
             <div className="tk-stepper">
               <button type="button" onClick={() => setSchedule({ type: 'count', perWeek: Math.max(1, perWeek - 1) })}>−</button>
               <span className="tk-val">{perWeek}</span>
               <button type="button" onClick={() => setSchedule({ type: 'count', perWeek: Math.min(7, perWeek + 1) })}>+</button>
-              <span className="tk-cap">{plural(perWeek,'раз','раза','раз')} в неделю</span>
+              <span className="tk-cap">{tr('perWeekUnit', { count: perWeek })}</span>
             </div>
           </div>
         )}
 
         <div className="tk-field">
-          <label>Описание (необязательно)</label>
-          <textarea className="tk-textarea" placeholder="О чём эта привычка, зачем она, как выполняется…" value={description} onChange={e => setDescription(e.target.value)} />
+          <label>{tr('descriptionLabel')}</label>
+          <textarea className="tk-textarea" placeholder={tr('descriptionPlaceholder')} value={description} onChange={e => setDescription(e.target.value)} />
         </div>
 
         <div className="tk-field">
-          <label>День начала</label>
+          <label>{tr('startDateLabel')}</label>
           <input className="tk-input" type="date" value={startDate} max={today} onChange={e => setStartDate(e.target.value)} />
         </div>
 
         <div className="tk-sheet-actions">
-          <button className="tk-btn-primary" onClick={submit}>{editing ? 'Сохранить' : 'Создать привычку'}</button>
+          <button className="tk-btn-primary" onClick={submit}>{editing ? trCommon('save') : tr('createHabitBtn')}</button>
           {editing
             ? <button className={`tk-btn-ghost tk-btn-danger ${confirmDel ? 'tk-armed' : ''}`} onClick={() => confirmDel ? onDelete(editing) : setConfirmDel(true)}>
-                {confirmDel ? 'Точно удалить? Нажми ещё раз' : '🗑 Удалить навсегда'}
+                {confirmDel ? trCommon('confirmDeleteAgain') : tr('deleteForeverBtn')}
               </button>
-            : <button className="tk-btn-ghost" onClick={onClose}>Отмена</button>}
+            : <button className="tk-btn-ghost" onClick={onClose}>{trCommon('cancel')}</button>}
         </div>
       </div>
     </div>

@@ -1,10 +1,12 @@
 'use client'
 
 import { useRef, useState } from 'react'
-import { useRouter } from 'next/navigation'
-import Link from 'next/link'
+import { useTranslations } from 'next-intl'
+import { Link, useRouter } from '@/i18n/navigation'
 
 export default function RegisterPage() {
+  const tr = useTranslations('auth.register')
+  const trErr = useTranslations('auth.errors')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const usernameRef = useRef<HTMLInputElement>(null)
@@ -28,11 +30,11 @@ export default function RegisterPage() {
         router.push('/app')
       } else {
         const data = await res.json()
-        setError(data.error ?? 'Ошибка регистрации')
+        setError(data.error ?? trErr('register'))
         setLoading(false)
       }
     } catch {
-      setError('Ошибка соединения')
+      setError(trErr('connection'))
       setLoading(false)
     }
   }
@@ -45,11 +47,11 @@ export default function RegisterPage() {
         className="relative w-full max-w-sm flex flex-col gap-4 rounded-3xl p-8 border border-white/[0.08]"
         style={{ background: 'linear-gradient(160deg, #141416, #0a0a0b)', boxShadow: '0 30px 80px -20px rgba(0,0,0,.8)' }}>
         <img src="/icon-192.png" alt="Pen" className="w-14 h-14 mx-auto mb-1 rounded-[16px]" style={{ boxShadow: '0 8px 24px -8px rgba(255,122,26,.5)' }} />
-        <h1 className="text-xl font-bold text-center text-white mb-1">Создать аккаунт</h1>
+        <h1 className="text-xl font-bold text-center text-white mb-1">{tr('title')}</h1>
         <input
           ref={usernameRef}
           type="text"
-          placeholder="Придумай логин"
+          placeholder={tr('usernamePlaceholder')}
           autoFocus
           autoComplete="username"
           className="bg-white/[0.04] border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 outline-none transition focus:border-[#ff7a1a] focus:bg-white/[0.06]"
@@ -57,7 +59,7 @@ export default function RegisterPage() {
         <input
           ref={passwordRef}
           type="password"
-          placeholder="Пароль (мин. 6 символов)"
+          placeholder={tr('passwordPlaceholder')}
           autoComplete="new-password"
           className="bg-white/[0.04] border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 outline-none transition focus:border-[#ff7a1a] focus:bg-white/[0.06]"
         />
@@ -68,12 +70,12 @@ export default function RegisterPage() {
           className="rounded-xl py-3 text-sm font-bold text-[#120a00] transition active:scale-[.98] disabled:opacity-40"
           style={{ background: 'linear-gradient(135deg, #ffa04d, #ff7a1a)', boxShadow: '0 10px 30px -8px rgba(255,122,26,.55)' }}
         >
-          {loading ? 'Создаём...' : 'Зарегистрироваться'}
+          {loading ? tr('submitting') : tr('submit')}
         </button>
         <p className="text-center text-sm text-gray-500">
-          Уже есть аккаунт?{' '}
+          {tr('haveAccount')}{' '}
           <Link href="/login" className="text-[#ff7a1a] hover:text-[#ffa04d] transition font-medium">
-            Войти
+            {tr('loginLink')}
           </Link>
         </p>
       </form>

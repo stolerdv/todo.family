@@ -1,28 +1,29 @@
 'use client'
 
-import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { useTranslations } from 'next-intl'
+import { Link, usePathname } from '@/i18n/navigation'
 
 const TABS = [
   {
-    href: '/today', label: 'Сегодня',
+    href: '/today', key: 'today' as const,
     icon: (<><circle cx="12" cy="12" r="4.5" /><path d="M12 2.5v2.5M12 19v2.5M21.5 12H19M5 12H2.5M18.5 5.5l-1.8 1.8M7.3 16.7l-1.8 1.8M18.5 18.5l-1.8-1.8M7.3 7.3 5.5 5.5" /></>),
   },
   {
-    href: '/tracker', label: 'Трекер',
+    href: '/tracker', key: 'tracker' as const,
     icon: (<><path d="M9 11l3 3 8-8" /><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9" /></>),
   },
   {
-    href: '/finance', label: 'Финансы',
+    href: '/finance', key: 'finance' as const,
     icon: (<><rect x="2.5" y="6" width="19" height="13" rx="2.5" /><path d="M2.5 10h19" /><circle cx="17" cy="14.5" r="1.2" fill="currentColor" stroke="none" /></>),
   },
   {
-    href: '/app', label: 'Напоминания',
+    href: '/app', key: 'reminders' as const,
     icon: (<><path d="M8 6h12M8 12h12M8 18h12" /><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01" /></>),
   },
 ]
 
 export default function BottomNav() {
+  const tr = useTranslations('nav')
   const pathname = usePathname()
   const activeIndex = TABS.findIndex(t => pathname === t.href || pathname.startsWith(t.href + '/'))
   return (
@@ -57,7 +58,7 @@ export default function BottomNav() {
               style={{ transform: active ? 'translateY(-1px) scale(1.08)' : 'none', filter: active ? 'drop-shadow(0 3px 8px rgba(255,122,26,.5))' : 'none' }}>
               {t.icon}
             </svg>
-            <span>{t.label}</span>
+            <span>{tr(t.key)}</span>
           </Link>
         )
       })}

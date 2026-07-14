@@ -1,12 +1,15 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useTranslations, useLocale } from 'next-intl'
 import type { Task, Section, CalEvent } from '@/lib/db'
 import type { Habit } from '@/lib/tracker'
 import type { Account, FinanceSettings, Budget, Credit } from '@/lib/finance'
 import { Dates, Stats, toCalc } from '@/lib/trackerStats'
 import { eventOccursOn } from '@/lib/events'
 import { buildIcs, downloadIcs } from '@/lib/ics'
+import { toIntlLocale } from '@/lib/intlLocale'
+import type { Locale } from '@/i18n/routing'
 import { categorySpend, currenciesInUse } from '@/lib/financeCalc'
 import { fmt, isMoneyHidden, setMoneyHidden, loadMoneyHidden } from '@/lib/hideMoney'
 import VoiceAssistant from '@/components/VoiceAssistant'
@@ -14,6 +17,9 @@ import VoiceAssistant from '@/components/VoiceAssistant'
 const DONE_STATES = ['Done', 'Cancelled']
 
 export default function TodayPage() {
+  const tr = useTranslations('today')
+  const trCommon = useTranslations('common')
+  const locale = useLocale()
   const [habits, setHabits] = useState<Habit[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [sections, setSections] = useState<Section[]>([])
@@ -113,15 +119,15 @@ export default function TodayPage() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ accountId: acc?.id ?? null, amount, advanceNextPayment: true }),
     })
-    if (!res.ok) { showToast('Не удалось'); return }
+    if (!res.ok) { showToast(tr('toasts.failed')); return }
     const { credit } = await res.json()
     setCredits(prev => prev.map(x => x.id === c.id ? credit : x))
     if (acc) {
       const delta = c.direction === 'owe' ? -amount : amount
       setAccounts(prev => prev.map(a => a.id === acc.id ? { ...a, balance: a.balance + delta } : a))
     }
-    showToast(credit.archived ? 'Оплачено полностью 🎉' : `Оплачено ${fmt(amount, c.currency)}`)
-  }, [accounts, showToast])
+    showToast(credit.archived ? tr('toasts.paidFull') : tr('toasts.paid', { amount: fmt(amount, c.currency) }))
+  }, [accounts, showToast, tr])
 
   const dueHabits = useMemo(
     () => habits.filter(h => !h.archived && Stats.isScheduled(toCalc(h), today)),
@@ -201,12 +207,12 @@ export default function TodayPage() {
 
   const greeting = useMemo(() => {
     const h = new Date().getHours()
-    return h < 5 ? 'Доброй ночи' : h < 12 ? 'Доброе утро' : h < 18 ? 'Добрый день' : 'Добрый вечер'
-  }, [])
+    return h < 5 ? tr('greeting.night') : h < 12 ? tr('greeting.morning') : h < 18 ? tr('greeting.day') : tr('greeting.evening')
+  }, [tr])
   const dateLabel = useMemo(() => {
-    const s = Dates.parse(today).toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' })
+    const s = Dates.parse(today).toLocaleDateString(toIntlLocale(locale as Locale), { weekday: 'long', day: 'numeric', month: 'long' })
     return s.charAt(0).toUpperCase() + s.slice(1)
-  }, [today])
+  }, [today, locale])
 
   const nothingPlanned = dueHabits.length === 0 && overdue.length === 0 && agenda.length === 0
     && upcomingTasks.length === 0 && upcomingEvents.length === 0 && duePayments.length === 0 && dueDebts.length === 0
@@ -214,24 +220,24 @@ export default function TodayPage() {
   const addTask = useCallback(async (title: string) => {
     let sid = sections.find(s => !s.archived)?.id
     if (!sid) {
-      const created = await fetch('/api/sections', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Входящие' }) }).then(r => r.json())
-      if (!created?.id) { showToast('Не удалось создать список'); return }
+      const created = await fetch('/api/sections', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: trCommon('defaultSectionName') }) }).then(r => r.json())
+      if (!created?.id) { showToast(tr('toasts.sectionCreateFailed')); return }
       setSections(prev => [...prev, created])
       sid = created.id
     }
     const task = await fetch('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sectionId: sid, title }) }).then(r => r.json())
-    if (!task?.id) { showToast('Не удалось добавить'); return }
+    if (!task?.id) { showToast(tr('toasts.addFailed')); return }
     await fetch(`/api/tasks/${task.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dueDate: today }) })
     setTasks(prev => [...prev, { ...task, dueDate: today }])
-    showToast('Задача добавлена')
-  }, [sections, today, showToast])
+    showToast(tr('toasts.taskAdded'))
+  }, [sections, today, showToast, tr, trCommon])
 
   const addEvent = useCallback(async (title: string, time: string) => {
     const created = await fetch('/api/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ day: today, time, title }) }).then(r => r.json())
-    if (!created?.id) { showToast('Не удалось добавить'); return }
+    if (!created?.id) { showToast(tr('toasts.addFailed')); return }
     setEvents(prev => [...prev, created])
-    showToast('Событие добавлено')
-  }, [today, showToast])
+    showToast(tr('toasts.eventAdded'))
+  }, [today, showToast, tr])
 
   if (loading) {
     return (
@@ -249,15 +255,15 @@ export default function TodayPage() {
         <p className="text-accent-400 text-sm font-semibold">{greeting}</p>
         <h1 className="text-xl font-bold text-white">{dateLabel}</h1>
         <p className="text-xs text-gray-500 mt-1">
-          {streak.current > 0 ? `🔥 Серия без пропусков: ${streak.current} ${plural(streak.current)}` : dueHabits.length > 0 ? 'Выполни все привычки сегодня — начни новую серию' : ' '}
+          {streak.current > 0 ? tr('streakLine', { count: streak.current }) : dueHabits.length > 0 ? tr('startStreakLine') : ' '}
         </p>
       </div>
 
       {overBudget.length > 0 && (
         <div className="rounded-2xl border border-red-500/20 bg-red-500/[0.06] px-4 py-3.5">
           <div className="flex items-center justify-between mb-0.5">
-            <span className="text-xs text-red-400 font-semibold">Превышен бюджет</span>
-            <button onClick={toggleHideMoney} aria-label={isMoneyHidden() ? 'Показать деньги' : 'Скрыть деньги'} className="text-gray-500 text-base leading-none">
+            <span className="text-xs text-red-400 font-semibold">{tr('overBudgetTitle')}</span>
+            <button onClick={toggleHideMoney} aria-label={isMoneyHidden() ? trCommon('showMoney') : trCommon('hideMoney')} className="text-gray-500 text-base leading-none">
               {isMoneyHidden() ? '🙈' : '👁'}
             </button>
           </div>
@@ -269,22 +275,22 @@ export default function TodayPage() {
 
       {!nothingPlanned && (
         <div className="flex gap-2.5">
-          {dueHabits.length > 0 && <StatPill value={`${habitsDone}/${dueHabits.length}`} label="Привычки" tone={habitsDone >= dueHabits.length ? 'good' : undefined} />}
-          <StatPill value={String(overdue.length)} label="Просрочено" tone={overdue.length > 0 ? 'red' : undefined} />
-          <StatPill value={String(agenda.length)} label="Сегодня" tone={agenda.length > 0 ? 'accent' : undefined} />
+          {dueHabits.length > 0 && <StatPill value={`${habitsDone}/${dueHabits.length}`} label={tr('pillHabits')} tone={habitsDone >= dueHabits.length ? 'good' : undefined} />}
+          <StatPill value={String(overdue.length)} label={tr('pillOverdue')} tone={overdue.length > 0 ? 'red' : undefined} />
+          <StatPill value={String(agenda.length)} label={tr('pillToday')} tone={agenda.length > 0 ? 'accent' : undefined} />
         </div>
       )}
 
       {nothingPlanned && (
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <span className="text-4xl mb-2">🌤</span>
-          <p className="text-gray-400 text-sm">На сегодня ничего не запланировано</p>
-          <p className="text-gray-700 text-xs mt-1">Добавь через + внизу или продиктуй в чате</p>
+          <p className="text-gray-400 text-sm">{tr('nothingPlannedTitle')}</p>
+          <p className="text-gray-700 text-xs mt-1">{tr('nothingPlannedHint')}</p>
         </div>
       )}
 
       {overdue.length > 0 && (
-        <Section title="Просрочено" count={overdue.length} accent="red">
+        <Section title={tr('overdueSection')} count={overdue.length} accent="red">
           <div className="space-y-1.5">
             {overdue.map(t => <TaskRow key={t.id} t={t} sectionName={sectionName(t.sectionId)} today={today} onDone={markTaskDone} showDate />)}
           </div>
@@ -292,20 +298,20 @@ export default function TodayPage() {
       )}
 
       {(duePayments.length > 0 || dueDebts.length > 0) && (
-        <Section title="Платежи" count={duePayments.length + dueDebts.length} accent="red">
+        <Section title={tr('paymentsSection')} count={duePayments.length + dueDebts.length} accent="red">
           <div className="space-y-1.5">
             {duePayments.map(c => (
               <div key={c.id} className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-3">
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-gray-200 truncate">{c.name}</p>
                   <p className={`text-xs mt-0.5 ${c.nextPaymentDate! < today ? 'text-red-400' : 'text-gray-500'}`}>
-                    {fmt(c.monthlyPayment!, c.currency)}{c.nextPaymentDate! < today ? ' · просрочен' : ' · сегодня'}
+                    {fmt(c.monthlyPayment!, c.currency)} · {c.nextPaymentDate! < today ? tr('overdueStatus') : tr('todayStatus')}
                   </p>
                 </div>
                 <button onClick={() => payCreditQuick(c)}
                   className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-bold text-[#120a00]"
                   style={{ background: 'linear-gradient(135deg, #ffa04d, #ff7a1a)' }}>
-                  Оплатить
+                  {tr('pay')}
                 </button>
               </div>
             ))}
@@ -314,13 +320,13 @@ export default function TodayPage() {
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-gray-200 truncate">{c.name}</p>
                   <p className={`text-xs mt-0.5 ${c.dueDate! < today ? 'text-red-400' : 'text-gray-500'}`}>
-                    {fmt(c.remaining, c.currency)}{c.dueDate! < today ? ' · просрочено' : c.dueDate === today ? ' · срок сегодня' : ` · срок ${Dates.humanShort(c.dueDate!)}`}
+                    {fmt(c.remaining, c.currency)} · {c.dueDate! < today ? tr('overdueDebtStatus') : c.dueDate === today ? tr('dueTodayStatus') : tr('dueOnStatus', { date: Dates.humanShort(c.dueDate!) })}
                   </p>
                 </div>
                 <button onClick={() => payCreditQuick(c)}
                   className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-bold text-[#120a00]"
                   style={{ background: 'linear-gradient(135deg, #ffa04d, #ff7a1a)' }}>
-                  Оплатить
+                  {tr('pay')}
                 </button>
               </div>
             ))}
@@ -329,7 +335,7 @@ export default function TodayPage() {
       )}
 
       {agenda.length > 0 && (
-        <Section title="Расписание на сегодня" count={agenda.length}>
+        <Section title={tr('scheduleSection')} count={agenda.length}>
           <div className="space-y-1.5">
             {agenda.map(item => item.type === 'task'
               ? <ScheduleTaskRow key={item.key} t={item.task} sectionName={sectionName(item.task.sectionId)} onDone={markTaskDone} />
@@ -339,7 +345,7 @@ export default function TodayPage() {
       )}
 
       {dueHabits.length > 0 && (
-        <Section title="Привычки на сегодня" count={dueHabits.length}>
+        <Section title={tr('habitsSection')} count={dueHabits.length}>
           <div className="space-y-1.5">
             {dueHabits.map(h => {
               const target = h.targetPerDay || 1
@@ -363,7 +369,7 @@ export default function TodayPage() {
       )}
 
       {(upcomingTasks.length > 0 || upcomingEvents.length > 0) && (
-        <Section title="Ближайшие дни">
+        <Section title={tr('upcomingSection')}>
           <div className="space-y-1">
             {upcomingEvents.map(({ event: e, occursOn }) => <CompactRow key={e.id + occursOn} time={e.time ? `${Dates.humanShort(occursOn)} · ${e.time}` : Dates.humanShort(occursOn)} title={e.title} />)}
             {upcomingTasks.map(t => <CompactRow key={t.id} time={Dates.humanShort(t.dueDate)} title={t.title} />)}
@@ -371,7 +377,7 @@ export default function TodayPage() {
         </Section>
       )}
 
-      <button onClick={() => setQuickAdd('task')} aria-label="Быстро добавить"
+      <button onClick={() => setQuickAdd('task')} aria-label={tr('quickAdd.quickAddLabel')}
         className="fixed z-40 grid place-items-center rounded-full shadow-lg text-white text-2xl font-light"
         style={{ left: 20, bottom: 'calc(84px + env(safe-area-inset-bottom, 0px))', width: 52, height: 52, background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.14)' }}>
         +
@@ -387,14 +393,6 @@ export default function TodayPage() {
       )}
     </div>
   )
-}
-
-function plural(n: number): string {
-  const n10 = n % 10, n100 = n % 100
-  if (n100 >= 11 && n100 <= 14) return 'дней'
-  if (n10 === 1) return 'день'
-  if (n10 >= 2 && n10 <= 4) return 'дня'
-  return 'дней'
 }
 
 function StatPill({ value, label, tone }: { value: string; label: string; tone?: 'red' | 'accent' | 'good' }) {
@@ -420,22 +418,25 @@ function Section({ title, count, accent, children }: { title: string; count?: nu
 }
 
 function IcsButton({ onExport }: { onExport: () => void }) {
+  const trCommon = useTranslations('common')
   return (
-    <button onClick={onExport} aria-label="Добавить в календарь телефона" className="shrink-0 text-base px-1 opacity-60 hover:opacity-100 transition">📅</button>
+    <button onClick={onExport} aria-label={trCommon('addToCalendar')} className="shrink-0 text-base px-1 opacity-60 hover:opacity-100 transition">📅</button>
   )
 }
 
 function TaskRow({ t, sectionName, today, onDone, showDate }: { t: Task; sectionName: string; today: string; onDone: (t: Task) => void; showDate?: boolean }) {
+  const tr = useTranslations('today')
+  const trCommon = useTranslations('common')
   const overdueDays = t.dueDate && t.dueDate < today ? Math.round((Dates.parse(today).getTime() - Dates.parse(t.dueDate).getTime()) / 86400000) : 0
   return (
     <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-3">
-      <button onClick={() => onDone(t)} aria-label="Отметить выполненной"
+      <button onClick={() => onDone(t)} aria-label={trCommon('markDone')}
         className="shrink-0 w-6 h-6 rounded-full border-2 border-gray-600 hover:border-accent-400 transition" />
       <div className="flex-1 min-w-0">
         <p className="text-sm text-gray-200 truncate">{t.title}</p>
         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
           {sectionName && <span className="text-xs text-gray-600">{sectionName}</span>}
-          {showDate && overdueDays > 0 && <span className="text-xs px-1.5 py-0.5 rounded-full text-red-400 bg-red-500/10">просрочено {overdueDays}д</span>}
+          {showDate && overdueDays > 0 && <span className="text-xs px-1.5 py-0.5 rounded-full text-red-400 bg-red-500/10">{tr('overdueBadge', { days: overdueDays })}</span>}
         </div>
       </div>
       {t.dueDate && <IcsButton onExport={() => downloadIcs(`${t.title}.ics`, buildIcs({ uid: t.id, title: t.title, day: t.dueDate! }))} />}
@@ -444,10 +445,11 @@ function TaskRow({ t, sectionName, today, onDone, showDate }: { t: Task; section
 }
 
 function ScheduleTaskRow({ t, sectionName, onDone }: { t: Task; sectionName: string; onDone: (t: Task) => void }) {
+  const trCommon = useTranslations('common')
   return (
     <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-3">
-      <span className="text-[11px] font-bold text-gray-500 uppercase tabular-nums w-14 shrink-0">Весь день</span>
-      <button onClick={() => onDone(t)} aria-label="Отметить выполненной"
+      <span className="text-[11px] font-bold text-gray-500 uppercase tabular-nums w-14 shrink-0">{trCommon('allDay')}</span>
+      <button onClick={() => onDone(t)} aria-label={trCommon('markDone')}
         className="shrink-0 w-6 h-6 rounded-full border-2 border-gray-600 hover:border-accent-400 transition" />
       <div className="flex-1 min-w-0">
         <p className="text-sm text-gray-200 truncate">{t.title}</p>
@@ -459,14 +461,16 @@ function ScheduleTaskRow({ t, sectionName, onDone }: { t: Task; sectionName: str
 }
 
 function ScheduleEventRow({ e, day }: { e: CalEvent; day: string }) {
+  const tr = useTranslations('today')
+  const trCommon = useTranslations('common')
   return (
     <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-3">
-      <span className="text-sm font-bold text-accent-400 tabular-nums w-14 shrink-0">{e.time || 'Весь день'}</span>
+      <span className="text-sm font-bold text-accent-400 tabular-nums w-14 shrink-0">{e.time || trCommon('allDay')}</span>
       <div className="flex-1 min-w-0">
         <p className="text-sm text-gray-200 truncate">{e.title}</p>
         {(e.endTime || e.note) && (
           <p className="text-xs text-gray-500 truncate">
-            {e.endTime ? `до ${e.endTime}` : ''}{e.endTime && e.note ? ' · ' : ''}{e.note}
+            {e.endTime ? tr('endsAt', { time: e.endTime }) : ''}{e.endTime && e.note ? ' · ' : ''}{e.note}
           </p>
         )}
       </div>
@@ -489,6 +493,8 @@ function QuickAddSheet({ type, onClose, onAddTask, onAddEvent }: {
   type: 'task' | 'event'; onClose: () => void
   onAddTask: (title: string) => Promise<void>; onAddEvent: (title: string, time: string) => Promise<void>
 }) {
+  const tr = useTranslations('today.quickAdd')
+  const trCommon = useTranslations('common')
   const [kind, setKind] = useState<'task' | 'event'>(type)
   const [title, setTitle] = useState('')
   const [time, setTime] = useState('')
@@ -510,29 +516,29 @@ function QuickAddSheet({ type, onClose, onAddTask, onAddEvent }: {
         style={{ background: 'linear-gradient(160deg, #161618, #0b0b0c)', paddingBottom: 'calc(28px + env(safe-area-inset-bottom, 0px))' }}>
         <div className="w-10 h-1 rounded-full bg-white/15 mx-auto mb-5" />
         <div className="flex rounded-xl border border-white/10 p-1 mb-5">
-          <button onClick={() => setKind('task')} className={`flex-1 py-2 rounded-lg text-sm font-semibold transition ${kind === 'task' ? 'bg-accent-600 text-[#120a00]' : 'text-gray-400'}`}>Задача</button>
-          <button onClick={() => setKind('event')} className={`flex-1 py-2 rounded-lg text-sm font-semibold transition ${kind === 'event' ? 'bg-accent-600 text-[#120a00]' : 'text-gray-400'}`}>Событие</button>
+          <button onClick={() => setKind('task')} className={`flex-1 py-2 rounded-lg text-sm font-semibold transition ${kind === 'task' ? 'bg-accent-600 text-[#120a00]' : 'text-gray-400'}`}>{tr('task')}</button>
+          <button onClick={() => setKind('event')} className={`flex-1 py-2 rounded-lg text-sm font-semibold transition ${kind === 'event' ? 'bg-accent-600 text-[#120a00]' : 'text-gray-400'}`}>{tr('event')}</button>
         </div>
 
-        <label className="block text-xs font-semibold text-gray-400 mb-1.5">{kind === 'task' ? 'Что нужно сделать сегодня' : 'Что за событие'}</label>
+        <label className="block text-xs font-semibold text-gray-400 mb-1.5">{kind === 'task' ? tr('taskLabel') : tr('eventLabel')}</label>
         <input autoFocus value={title} onChange={e => setTitle(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && title.trim()) submit() }}
-          placeholder={kind === 'task' ? 'Например: позвонить в поликлинику' : 'Например: встреча в центре'}
+          placeholder={kind === 'task' ? tr('taskPlaceholder') : tr('eventPlaceholder')}
           className="w-full bg-white/[0.04] border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 outline-none focus:border-accent-500 mb-4" />
 
         {kind === 'event' && (
           <>
-            <label className="block text-xs font-semibold text-gray-400 mb-1.5">Время (необязательно — иначе «весь день»)</label>
+            <label className="block text-xs font-semibold text-gray-400 mb-1.5">{tr('timeLabel')}</label>
             <input type="time" value={time} onChange={e => setTime(e.target.value)}
               className="w-full bg-white/[0.04] border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-accent-500 [color-scheme:dark] mb-4" />
           </>
         )}
 
         <div className="flex gap-3 mt-2">
-          <button onClick={onClose} className="flex-1 border border-white/10 text-gray-300 font-medium py-3 rounded-xl transition hover:bg-white/[0.04]">Отмена</button>
+          <button onClick={onClose} className="flex-1 border border-white/10 text-gray-300 font-medium py-3 rounded-xl transition hover:bg-white/[0.04]">{trCommon('cancel')}</button>
           <button onClick={submit} disabled={!title.trim() || submitting}
             className="flex-1 bg-accent-600 hover:bg-accent-500 text-[#120a00] font-bold py-3 rounded-xl transition active:scale-[.98] disabled:opacity-40">
-            {submitting ? 'Добавляем…' : 'Добавить'}
+            {submitting ? tr('adding') : trCommon('add')}
           </button>
         </div>
       </div>

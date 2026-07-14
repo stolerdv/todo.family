@@ -1,18 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getTranslations } from 'next-intl/server'
 import { signToken } from '@/lib/auth'
 import { verifyPassword, needsRehash, hashPassword } from '@/lib/password'
 import { findUserByUsername, updateUserPassword } from '@/lib/db'
+import { getLocaleFromCookies } from '@/lib/serverLocale'
 
 export async function POST(req: NextRequest) {
   const { username, password } = await req.json()
+  const t = await getTranslations({ locale: getLocaleFromCookies(), namespace: 'auth.errors' })
 
   if (!username || !password) {
-    return NextResponse.json({ error: 'Неверный логин или пароль' }, { status: 401 })
+    return NextResponse.json({ error: t('invalidCredentials') }, { status: 401 })
   }
 
   const user = await findUserByUsername(username)
   if (!user || !verifyPassword(password, user.passwordHash)) {
-    return NextResponse.json({ error: 'Неверный логин или пароль' }, { status: 401 })
+    return NextResponse.json({ error: t('invalidCredentials') }, { status: 401 })
   }
 
   // прозрачно перехешируем старые (SHA-256) пароли в scrypt при успешном входе

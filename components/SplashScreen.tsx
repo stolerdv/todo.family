@@ -1,8 +1,10 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useTranslations } from 'next-intl'
 
 export default function SplashScreen() {
+  const tr = useTranslations('common')
   const [phase, setPhase] = useState<'enter' | 'visible' | 'exit' | 'done'>('enter')
   const [imgLoaded, setImgLoaded] = useState(false)
 
@@ -66,7 +68,7 @@ export default function SplashScreen() {
         className={`flex flex-col items-center gap-1.5 ${visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}`}
       >
         <h1 className="relative text-4xl font-bold tracking-[0.3em] text-white pl-[0.3em]">Pen</h1>
-        <p className="relative text-xs text-[#ff7a1a]/80 tracking-[0.25em] uppercase">Организация жизни</p>
+        <p className="relative text-xs text-[#ff7a1a]/80 tracking-[0.25em] uppercase">{tr('tagline')}</p>
       </div>
 
       {/* Dots */}
