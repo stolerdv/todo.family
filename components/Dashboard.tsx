@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, useMemo } from 'react'
-import type { Task, Section, Subtask, CalEvent } from '@/lib/db'
+import { useState } from 'react'
+import type { Task, Section, Subtask, CalEvent, RepeatRule } from '@/lib/db'
+import { eventOccursOn } from '@/lib/events'
 
-type EventDraft = { day: string; time: string; endTime: string; title: string; note: string }
+type EventDraft = { day: string; time: string; endTime: string; title: string; note: string; repeat: RepeatRule }
 
 const PRIORITY_COLOR: Record<string, string> = {
   Critical: 'bg-red-400',
@@ -39,11 +40,9 @@ export default function Dashboard({ tasks, sections, subtasks, events, onTaskCli
   const [sheetDay, setSheetDay] = useState<string | null>(null) // открытая шторка добавления события
   const [editingEvent, setEditingEvent] = useState<CalEvent | null>(null) // открытая шторка редактирования
 
-  const eventsByDay = useMemo(() => {
-    const map: Record<string, CalEvent[]> = {}
-    for (const e of events) (map[e.day] ??= []).push(e)
-    return map
-  }, [events])
+  // повторяющиеся события не хранятся отдельной строкой на каждый день — проверяем
+  // «попадает ли событие на эту дату» на лету (см. lib/events.ts)
+  const eventsOn = (day: string) => events.filter(e => eventOccursOn(e, day))
 
   const today = new Date(); today.setHours(0,0,0,0)
   // локальная дата, НЕ toISOString() — тот переводит в UTC и до утра по местному
@@ -72,7 +71,7 @@ export default function Dashboard({ tasks, sections, subtasks, events, onTaskCli
     .sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority])
     .slice(0, 12)
 
-  const selectedDayEvents = selectedDay ? (eventsByDay[selectedDay] ?? []) : []
+  const selectedDayEvents = selectedDay ? eventsOn(selectedDay) : []
 
   function dayStr(cellIdx: number): string | null {
     const dayNum = cellIdx - startDow + 1
@@ -162,7 +161,7 @@ export default function Dashboard({ tasks, sections, subtasks, events, onTaskCli
             {Array.from({ length: totalCells }).map((_, i) => {
               const ds = dayStr(i)
               if (!ds) return <div key={i} />
-              const dayEvents = eventsByDay[ds] ?? []
+              const dayEvents = eventsOn(ds)
               const isToday = ds === todayStr
               const isSelected = ds === selectedDay
               const isPast = ds < todayStr
@@ -301,6 +300,7 @@ function EventSheet({ day, editing, onClose, onSave, onDelete }: {
   const [time, setTime] = useState(editing?.time || '12:00')
   const [endTime, setEndTime] = useState(editing?.endTime ?? '')
   const [note, setNote] = useState(editing?.note ?? '')
+  const [repeat, setRepeat] = useState<RepeatRule>(editing?.repeat ?? null)
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   const dayLabel = new Date(day + 'T12:00').toLocaleDateString('ru', { weekday: 'long', day: 'numeric', month: 'long' })
@@ -308,8 +308,10 @@ function EventSheet({ day, editing, onClose, onSave, onDelete }: {
 
   const save = () => {
     if (!canSave) return
-    onSave({ day, time: allDay ? '' : time, endTime: allDay ? '' : endTime, title: title.trim(), note: note.trim() })
+    onSave({ day, time: allDay ? '' : time, endTime: allDay ? '' : endTime, title: title.trim(), note: note.trim(), repeat })
   }
+
+  const repeatLabel: Record<Exclude<RepeatRule, null>, string> = { daily: 'День', weekly: 'Неделя', monthly: 'Месяц', yearly: 'Год' }
 
   return (
     <div className="fixed inset-0 z-[120] flex items-end md:items-center justify-center">
@@ -348,6 +350,26 @@ function EventSheet({ day, editing, onClose, onSave, onDelete }: {
           </div>
         )}
 
+        <label className="block text-xs font-semibold text-gray-400 mb-1.5">Повторять</label>
+        <div className="flex gap-1.5 mb-4 flex-wrap">
+          <button type="button" onClick={() => setRepeat(null)}
+            className={`text-xs px-3 py-1.5 rounded-full border transition ${!repeat ? 'bg-accent-500/20 border-accent-500/40 text-accent-300' : 'border-white/10 text-gray-400'}`}>
+            Нет
+          </button>
+          {(['daily', 'weekly', 'monthly', 'yearly'] as const).map(r => (
+            <button key={r} type="button" onClick={() => setRepeat(r)}
+              className={`text-xs px-3 py-1.5 rounded-full border transition ${repeat === r ? 'bg-accent-500/20 border-accent-500/40 text-accent-300' : 'border-white/10 text-gray-400'}`}>
+              {repeatLabel[r]}
+            </button>
+          ))}
+        </div>
+        {repeat && (
+          <p className="text-xs text-gray-600 -mt-2 mb-4">
+            Повторяется каждый{repeat === 'daily' ? ' день' : repeat === 'weekly' ? 'ую неделю (по тому же дню недели)' : repeat === 'monthly' ? ' месяц (в это число)' : ' год (в этот день)'}.
+            {editing ? ' Изменения применятся ко всем повторениям.' : ''}
+          </p>
+        )}
+
         <label className="block text-xs font-semibold text-gray-400 mb-1.5">Заметка (необязательно)</label>
         <textarea value={note} onChange={e => setNote(e.target.value)} rows={2}
           placeholder="Место, детали…"
@@ -363,7 +385,7 @@ function EventSheet({ day, editing, onClose, onSave, onDelete }: {
         {editing && onDelete && (
           <button onClick={() => confirmDelete ? onDelete() : setConfirmDelete(true)}
             className={`w-full mt-3 text-sm font-medium py-2.5 rounded-xl transition ${confirmDelete ? 'bg-red-500/15 text-red-400 border border-red-500/30' : 'text-gray-500 hover:text-red-400'}`}>
-            {confirmDelete ? 'Точно удалить? Нажми ещё раз' : 'Удалить событие'}
+            {confirmDelete ? 'Точно удалить? Нажми ещё раз' : editing.repeat ? 'Удалить все повторения' : 'Удалить событие'}
           </button>
         )}
       </div>

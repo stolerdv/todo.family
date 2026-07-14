@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
     const b = await req.json()
     if (!b.day || !b.title?.trim()) return NextResponse.json({ error: 'day and title required' }, { status: 400 })
     const ev = await createEvent(user.userId, {
-      day: b.day, time: b.time, endTime: b.endTime, title: b.title.trim(), note: b.note,
+      day: b.day, time: b.time, endTime: b.endTime, title: b.title.trim(), note: b.note, repeat: b.repeat ?? null,
     })
     return NextResponse.json(ev, { status: 201 })
   } catch (e) {

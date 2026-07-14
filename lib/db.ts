@@ -351,6 +351,11 @@ export async function deleteComment(id: string, userId: string): Promise<void> {
 // ── Events (календарь занятости) ─────────────────────────────────────────────────
 // События с временем — отдельная сущность от задач. Личные, скоуп по user_id.
 
+// repeat = null → разовое событие; иначе повторяется бесконечно вперёд от day
+// (день недели/месяца/года берётся из day) — считается «на лету» через
+// eventOccursOn (lib/events.ts), лишних строк в базе на будущее не создаётся.
+export type RepeatRule = 'daily' | 'weekly' | 'monthly' | 'yearly' | null
+
 export interface CalEvent {
   id: string
   day: string       // 'YYYY-MM-DD'
@@ -358,31 +363,32 @@ export interface CalEvent {
   endTime: string    // 'HH:MM' или ''
   title: string
   note: string
+  repeat: RepeatRule
   createdAt: string
 }
 
 function mapEvent(r: any): CalEvent {
   return {
     id: r.id, day: r.day, time: r.time ?? '', endTime: r.end_time ?? '',
-    title: r.title, note: r.note ?? '', createdAt: r.created_at,
+    title: r.title, note: r.note ?? '', repeat: (r.repeat ?? null) as RepeatRule, createdAt: r.created_at,
   }
 }
 
 export async function getEvents(userId: string): Promise<CalEvent[]> {
   const rows = await sql()`
-    SELECT id, to_char(day, 'YYYY-MM-DD') AS day, time, end_time, title, note, created_at
+    SELECT id, to_char(day, 'YYYY-MM-DD') AS day, time, end_time, title, note, repeat, created_at
     FROM todo_events WHERE user_id = ${userId}
     ORDER BY day, COALESCE(time, '00:00'), created_at`
   return (rows as any[]).map(mapEvent)
 }
 
-export interface EventInput { day: string; time?: string; endTime?: string; title: string; note?: string }
+export interface EventInput { day: string; time?: string; endTime?: string; title: string; note?: string; repeat?: RepeatRule }
 
 export async function createEvent(userId: string, e: EventInput): Promise<CalEvent> {
   const rows = await sql()`
-    INSERT INTO todo_events (user_id, day, time, end_time, title, note)
-    VALUES (${userId}, ${e.day}::date, ${e.time || null}, ${e.endTime || null}, ${e.title}, ${e.note ?? ''})
-    RETURNING id, to_char(day, 'YYYY-MM-DD') AS day, time, end_time, title, note, created_at`
+    INSERT INTO todo_events (user_id, day, time, end_time, title, note, repeat)
+    VALUES (${userId}, ${e.day}::date, ${e.time || null}, ${e.endTime || null}, ${e.title}, ${e.note ?? ''}, ${e.repeat ?? null})
+    RETURNING id, to_char(day, 'YYYY-MM-DD') AS day, time, end_time, title, note, repeat, created_at`
   return mapEvent(rows[0])
 }
 
@@ -392,6 +398,7 @@ export async function updateEvent(id: string, userId: string, f: Partial<EventIn
   if (f.endTime !== undefined) await sql()`UPDATE todo_events SET end_time = ${f.endTime || null} WHERE id = ${id} AND user_id = ${userId}`
   if (f.note    !== undefined) await sql()`UPDATE todo_events SET note     = ${f.note}           WHERE id = ${id} AND user_id = ${userId}`
   if (f.day     !== undefined) await sql()`UPDATE todo_events SET day      = ${f.day}::date       WHERE id = ${id} AND user_id = ${userId}`
+  if (f.repeat  !== undefined) await sql()`UPDATE todo_events SET repeat   = ${f.repeat}          WHERE id = ${id} AND user_id = ${userId}`
 }
 
 export async function deleteEvent(id: string, userId: string): Promise<void> {

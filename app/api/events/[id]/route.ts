@@ -13,6 +13,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       ...(b.endTime !== undefined && { endTime: b.endTime }),
       ...(b.note    !== undefined && { note: b.note }),
       ...(b.day     !== undefined && { day: b.day }),
+      ...(b.repeat  !== undefined && { repeat: b.repeat }),
     })
     return NextResponse.json({ ok: true })
   } catch (e) {

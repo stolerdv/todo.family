@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import type { Section, Task, TaskState, Subtask, Priority, Comment, CalEvent } from '@/lib/db'
+import type { Section, Task, TaskState, Subtask, Priority, Comment, CalEvent, RepeatRule } from '@/lib/db'
 import Dashboard from '@/components/Dashboard'
 
 const STATES: TaskState[] = ['Todo', 'In Progress', 'Review', 'Blocked', 'Done', 'Cancelled', 'Deferred', 'Delegated']
@@ -243,7 +243,7 @@ export default function AppPage() {
   const isArchiveView  = activeSection === ARCHIVE_VIEW_ID
 
   // ── Календарь событий (занятость) — отдельно от задач ──────────────────────────
-  async function addEvent(data: { day: string; time: string; endTime: string; title: string; note: string }) {
+  async function addEvent(data: { day: string; time: string; endTime: string; title: string; note: string; repeat: RepeatRule }) {
     if (!data.title.trim()) return
     const res = await fetch('/api/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
     if (!res.ok) return
@@ -256,7 +256,7 @@ export default function AppPage() {
     await fetch(`/api/events/${id}`, { method: 'DELETE' })
   }
 
-  async function editEvent(id: string, data: { day: string; time: string; endTime: string; title: string; note: string }) {
+  async function editEvent(id: string, data: { day: string; time: string; endTime: string; title: string; note: string; repeat: RepeatRule }) {
     if (!data.title.trim()) return
     setEvents(prev => prev.map(e => e.id === id ? { ...e, ...data } : e))
     await fetch(`/api/events/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })

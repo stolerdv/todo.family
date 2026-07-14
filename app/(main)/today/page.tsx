@@ -5,6 +5,7 @@ import type { Task, Section, CalEvent } from '@/lib/db'
 import type { Habit } from '@/lib/tracker'
 import type { Account, FinanceSettings, Budget, Credit } from '@/lib/finance'
 import { Dates, Stats, toCalc } from '@/lib/trackerStats'
+import { eventOccursOn } from '@/lib/events'
 import { categorySpend, currenciesInUse } from '@/lib/financeCalc'
 import { fmt, isMoneyHidden, setMoneyHidden, loadMoneyHidden } from '@/lib/hideMoney'
 import VoiceAssistant from '@/components/VoiceAssistant'
@@ -145,12 +146,21 @@ export default function TodayPage() {
     [activeTasks, today],
   )
   const eventsToday = useMemo(
-    () => events.filter(e => e.day === today).sort((a, b) => (a.time || '').localeCompare(b.time || '')),
+    () => events.filter(e => eventOccursOn(e, today)).sort((a, b) => (a.time || '').localeCompare(b.time || '')),
     [events, today],
   )
+  // повторяющееся событие может попасть в окно «ближайшие дни» несколько раз
+  // (например ежедневное) — каждое вхождение несёт свою фактическую дату occursOn,
+  // а не e.day (день создания/якорь повторения)
   const upcomingEvents = useMemo(() => {
     const limit = Dates.addDays(today, 6)
-    return events.filter(e => e.day > today && e.day <= limit).sort((a, b) => a.day === b.day ? (a.time || '').localeCompare(b.time || '') : a.day.localeCompare(b.day)).slice(0, 5)
+    const out: { event: CalEvent; occursOn: string }[] = []
+    for (let d = Dates.addDays(today, 1); d <= limit; d = Dates.addDays(d, 1)) {
+      for (const e of events) if (eventOccursOn(e, d)) out.push({ event: e, occursOn: d })
+    }
+    return out
+      .sort((a, b) => a.occursOn === b.occursOn ? (a.event.time || '').localeCompare(b.event.time || '') : a.occursOn.localeCompare(b.occursOn))
+      .slice(0, 5)
   }, [events, today])
 
   const sectionName = (id: string) => sections.find(s => s.id === id)?.name ?? ''
@@ -354,7 +364,7 @@ export default function TodayPage() {
       {(upcomingTasks.length > 0 || upcomingEvents.length > 0) && (
         <Section title="Ближайшие дни">
           <div className="space-y-1">
-            {upcomingEvents.map(e => <CompactRow key={e.id} time={e.time ? `${Dates.humanShort(e.day)} · ${e.time}` : Dates.humanShort(e.day)} title={e.title} />)}
+            {upcomingEvents.map(({ event: e, occursOn }) => <CompactRow key={e.id + occursOn} time={e.time ? `${Dates.humanShort(occursOn)} · ${e.time}` : Dates.humanShort(occursOn)} title={e.title} />)}
             {upcomingTasks.map(t => <CompactRow key={t.id} time={Dates.humanShort(t.dueDate)} title={t.title} />)}
           </div>
         </Section>
