@@ -37,16 +37,24 @@ function priorityLabel(p: Priority, tr: (key: string, values?: Record<string, an
   return p === 'None' ? tr('noPriority') : `${PRIORITY_META[p].emoji} ${p}`
 }
 
-function dueDateLabel(dueDate: string, tr: (key: string, values?: Record<string, any>) => string, locale: string): { text: string; color: string } | null {
+function dueDateLabel(dueDate: string, tr: (key: string, values?: Record<string, any>) => string, locale: string): { text: string; color: string; overdue: boolean } | null {
   if (!dueDate) return null
   const today = new Date(); today.setHours(0,0,0,0)
   const due = new Date(dueDate)
   const diff = Math.round((due.getTime() - today.getTime()) / 86400000)
-  if (diff < 0)  return { text: tr('overdueBadge', { days: Math.abs(diff) }), color: 'text-red-400 bg-red-500/10' }
-  if (diff === 0) return { text: tr('todayBadge'), color: 'text-orange-400 bg-orange-500/10' }
-  if (diff === 1) return { text: tr('tomorrowBadge'), color: 'text-yellow-400 bg-yellow-500/10' }
-  if (diff <= 7)  return { text: tr('inDaysBadge', { days: diff }), color: 'text-gray-400 bg-gray-800' }
-  return { text: due.toLocaleDateString(locale, { day: 'numeric', month: 'short' }), color: 'text-gray-500 bg-gray-800' }
+  if (diff < 0)  return { text: tr('overdueBadge', { days: Math.abs(diff) }), color: 'text-red-400 bg-red-500/10', overdue: true }
+  if (diff === 0) return { text: tr('todayBadge'), color: 'text-orange-400 bg-orange-500/10', overdue: false }
+  if (diff === 1) return { text: tr('tomorrowBadge'), color: 'text-yellow-400 bg-yellow-500/10', overdue: false }
+  if (diff <= 7)  return { text: tr('inDaysBadge', { days: diff }), color: 'text-gray-400 bg-gray-800', overdue: false }
+  return { text: due.toLocaleDateString(locale, { day: 'numeric', month: 'short' }), color: 'text-gray-500 bg-gray-800', overdue: false }
+}
+
+// сдвинуть дедлайн на N дней вперёд от сегодняшней даты (для «отложить на день»)
+// — именно от сегодня, а не от старого дедлайна, иначе давно просроченная
+// задача не «догонит» текущий день за один тап
+function snoozeDate(days: number): string {
+  const d = new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate() + days)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 const HOME_VIEW_ID     = '__home__'
@@ -422,10 +430,18 @@ export default function AppPage() {
 
             {/* Due date */}
             {due ? (
-              <button onClick={() => updateTask(task.id, { dueDate: '' })}
-                className={`text-xs px-2.5 py-1 rounded-full font-medium ${due.color}`} title={tr('removeDateHint')}>
-                📅 {due.text}
-              </button>
+              <>
+                <button onClick={() => updateTask(task.id, { dueDate: '' })}
+                  className={`text-xs px-2.5 py-1 rounded-full font-medium ${due.color}`} title={tr('removeDateHint')}>
+                  📅 {due.text}
+                </button>
+                {due.overdue && (
+                  <button onClick={() => updateTask(task.id, { dueDate: snoozeDate(1) })}
+                    className="text-xs px-2.5 py-1 rounded-full font-medium text-gray-500 hover:text-gray-300 bg-gray-800" title={tr('snoozeHint')}>
+                    {tr('snoozeBtn')}
+                  </button>
+                )}
+              </>
             ) : (
               <div className="relative">
                 <button

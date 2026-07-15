@@ -474,6 +474,8 @@
     "tomorrowBadge": "Завтра",
     "inDaysBadge": "Через {days}д",
     "removeDateHint": "Нажми чтобы убрать",
+    "snoozeBtn": "+1 день",
+    "snoozeHint": "Отложить на завтра",
     "addPriorityBtn": "+ Важность",
     "addDeadlineBtn": "+ Дедлайн",
     "addSubtaskBtn": "Добавить подзадачу",

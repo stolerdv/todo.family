@@ -474,6 +474,8 @@
     "tomorrowBadge": "Tomorrow",
     "inDaysBadge": "In {days}d",
     "removeDateHint": "Tap to remove",
+    "snoozeBtn": "+1 day",
+    "snoozeHint": "Postpone to tomorrow",
     "addPriorityBtn": "+ Priority",
     "addDeadlineBtn": "+ Deadline",
     "addSubtaskBtn": "Add subtask",

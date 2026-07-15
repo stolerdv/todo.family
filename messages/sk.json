@@ -474,6 +474,8 @@
     "tomorrowBadge": "Zajtra",
     "inDaysBadge": "O {days}d",
     "removeDateHint": "Klikni pre odstránenie",
+    "snoozeBtn": "+1 deň",
+    "snoozeHint": "Odložiť na zajtra",
     "addPriorityBtn": "+ Priorita",
     "addDeadlineBtn": "+ Termín",
     "addSubtaskBtn": "Pridať podúlohu",
