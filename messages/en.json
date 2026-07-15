@@ -84,6 +84,7 @@
     "streakLine": "🔥 Streak: {count} {count, plural, one {day} other {days}}",
     "startStreakLine": "Complete all habits today — start a new streak",
     "overBudgetTitle": "Over budget",
+    "dismissBudgetAria": "Hide until end of month",
     "nothingPlannedTitle": "Nothing planned for today",
     "nothingPlannedHint": "Add via + below or speak to the chat",
     "pillHabits": "Habits",

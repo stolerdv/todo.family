@@ -193,6 +193,26 @@ export default function TodayPage() {
       .map(x => ({ ...x, spent: categorySpend(x.b.categoryId, txns, accounts, effSettings, today) }))
       .filter(x => x.spent > x.b.amount)
   }, [budgets, finCategories, txns, accounts, effSettings, today])
+
+  // скрытие баннера «превышен бюджет» до конца месяца (localStorage, ключ включает
+  // месяц — так дисмисс сам «протухает» и в новом месяце баннер снова покажется)
+  const [dismissedBudgetIds, setDismissedBudgetIds] = useState<string[]>([])
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('fin_budget_dismissed')
+      const parsed = raw ? JSON.parse(raw) : null
+      if (parsed && parsed.month === today.slice(0, 7)) setDismissedBudgetIds(parsed.ids)
+    } catch {}
+  }, [today])
+  const visibleOverBudget = useMemo(
+    () => overBudget.filter(x => !dismissedBudgetIds.includes(x.b.categoryId)),
+    [overBudget, dismissedBudgetIds],
+  )
+  const dismissOverBudget = useCallback(() => {
+    const ids = overBudget.map(x => x.b.categoryId)
+    localStorage.setItem('fin_budget_dismissed', JSON.stringify({ month: today.slice(0, 7), ids }))
+    setDismissedBudgetIds(ids)
+  }, [overBudget, today])
   const duePayments = useMemo(
     () => credits.filter(c => !c.archived && c.monthlyPayment != null && c.nextPaymentDate && c.nextPaymentDate <= today),
     [credits, today],
@@ -259,16 +279,21 @@ export default function TodayPage() {
         </p>
       </div>
 
-      {overBudget.length > 0 && (
+      {visibleOverBudget.length > 0 && (
         <div className="rounded-2xl border border-red-500/20 bg-red-500/[0.06] px-4 py-3.5">
           <div className="flex items-center justify-between mb-0.5">
             <span className="text-xs text-red-400 font-semibold">{tr('overBudgetTitle')}</span>
-            <button onClick={toggleHideMoney} aria-label={isMoneyHidden() ? trCommon('showMoney') : trCommon('hideMoney')} className="text-gray-500 text-base leading-none">
-              {isMoneyHidden() ? '🙈' : '👁'}
-            </button>
+            <div className="flex items-center gap-2.5">
+              <button onClick={toggleHideMoney} aria-label={isMoneyHidden() ? trCommon('showMoney') : trCommon('hideMoney')} className="text-gray-500 text-base leading-none">
+                {isMoneyHidden() ? '🙈' : '👁'}
+              </button>
+              <button onClick={dismissOverBudget} aria-label={tr('dismissBudgetAria')} className="text-gray-500 hover:text-gray-300 text-base leading-none">
+                ✕
+              </button>
+            </div>
           </div>
           <p className="text-sm text-red-300 mt-1">
-            {overBudget.map(x => `${x.c.name} +${fmt(x.spent - x.b.amount, effSettings.baseCurrency)}`).join(', ')}
+            {visibleOverBudget.map(x => `${x.c.name} +${fmt(x.spent - x.b.amount, effSettings.baseCurrency)}`).join(', ')}
           </p>
         </div>
       )}

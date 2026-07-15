@@ -84,6 +84,7 @@
     "streakLine": "🔥 Серия без пропусков: {count} {count, plural, one {день} few {дня} other {дней}}",
     "startStreakLine": "Выполни все привычки сегодня — начни новую серию",
     "overBudgetTitle": "Превышен бюджет",
+    "dismissBudgetAria": "Скрыть до конца месяца",
     "nothingPlannedTitle": "На сегодня ничего не запланировано",
     "nothingPlannedHint": "Добавь через + внизу или продиктуй в чате",
     "pillHabits": "Привычки",

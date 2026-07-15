@@ -84,6 +84,7 @@
     "streakLine": "🔥 Séria bez výpadku: {count} {count, plural, one {deň} few {dni} other {dní}}",
     "startStreakLine": "Splň všetky návyky dnes — začni novú sériu",
     "overBudgetTitle": "Prekročený rozpočet",
+    "dismissBudgetAria": "Skryť do konca mesiaca",
     "nothingPlannedTitle": "Na dnes nič naplánované",
     "nothingPlannedHint": "Pridaj cez + dole alebo nadiktuj do chatu",
     "pillHabits": "Návyky",
