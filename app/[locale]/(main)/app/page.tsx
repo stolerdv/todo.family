@@ -2,7 +2,10 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
+import { useTranslations, useLocale } from 'next-intl'
 import type { Section, Task, TaskState, Subtask, Priority, Comment, CalEvent, RepeatRule } from '@/lib/db'
+import { toIntlLocale } from '@/lib/intlLocale'
+import type { Locale } from '@/i18n/routing'
 import Dashboard from '@/components/Dashboard'
 
 const STATES: TaskState[] = ['Todo', 'In Progress', 'Review', 'Blocked', 'Done', 'Cancelled', 'Deferred', 'Delegated']
@@ -22,24 +25,28 @@ const STATE_META: Record<TaskState, { color: string; dot: string }> = {
   'Delegated':   { color: 'bg-accent-500/10 text-accent-200 border border-accent-500/25', dot: 'bg-accent-300' },
 }
 
-const PRIORITY_META: Record<Priority, { color: string; dot: string; label: string }> = {
-  Critical: { color: 'bg-red-500/20 text-red-300 border border-red-500/40',       dot: 'bg-red-400',    label: '🔴 Critical' },
-  High:     { color: 'bg-orange-500/20 text-orange-300 border border-orange-500/40', dot: 'bg-orange-400', label: '🟠 High' },
-  Medium:   { color: 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/40', dot: 'bg-yellow-400', label: '🟡 Medium' },
-  Low:      { color: 'bg-gray-600/25 text-gray-300 border border-gray-500/40',     dot: 'bg-gray-400',   label: '⚪ Low' },
-  None:     { color: 'bg-gray-800 text-gray-600',                                  dot: 'bg-gray-700',   label: '— Без приоритета' },
+const PRIORITY_META: Record<Priority, { color: string; dot: string; emoji: string }> = {
+  Critical: { color: 'bg-red-500/20 text-red-300 border border-red-500/40',       dot: 'bg-red-400',    emoji: '🔴' },
+  High:     { color: 'bg-orange-500/20 text-orange-300 border border-orange-500/40', dot: 'bg-orange-400', emoji: '🟠' },
+  Medium:   { color: 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/40', dot: 'bg-yellow-400', emoji: '🟡' },
+  Low:      { color: 'bg-gray-600/25 text-gray-300 border border-gray-500/40',     dot: 'bg-gray-400',   emoji: '⚪' },
+  None:     { color: 'bg-gray-800 text-gray-600',                                  dot: 'bg-gray-700',   emoji: '—' },
 }
 
-function dueDateLabel(dueDate: string): { text: string; color: string } | null {
+function priorityLabel(p: Priority, tr: (key: string, values?: Record<string, any>) => string): string {
+  return p === 'None' ? tr('noPriority') : `${PRIORITY_META[p].emoji} ${p}`
+}
+
+function dueDateLabel(dueDate: string, tr: (key: string, values?: Record<string, any>) => string, locale: string): { text: string; color: string } | null {
   if (!dueDate) return null
   const today = new Date(); today.setHours(0,0,0,0)
   const due = new Date(dueDate)
   const diff = Math.round((due.getTime() - today.getTime()) / 86400000)
-  if (diff < 0)  return { text: `Просрочено ${Math.abs(diff)}д`, color: 'text-red-400 bg-red-500/10' }
-  if (diff === 0) return { text: 'Сегодня', color: 'text-orange-400 bg-orange-500/10' }
-  if (diff === 1) return { text: 'Завтра', color: 'text-yellow-400 bg-yellow-500/10' }
-  if (diff <= 7)  return { text: `Через ${diff}д`, color: 'text-gray-400 bg-gray-800' }
-  return { text: due.toLocaleDateString('ru', { day: 'numeric', month: 'short' }), color: 'text-gray-500 bg-gray-800' }
+  if (diff < 0)  return { text: tr('overdueBadge', { days: Math.abs(diff) }), color: 'text-red-400 bg-red-500/10' }
+  if (diff === 0) return { text: tr('todayBadge'), color: 'text-orange-400 bg-orange-500/10' }
+  if (diff === 1) return { text: tr('tomorrowBadge'), color: 'text-yellow-400 bg-yellow-500/10' }
+  if (diff <= 7)  return { text: tr('inDaysBadge', { days: diff }), color: 'text-gray-400 bg-gray-800' }
+  return { text: due.toLocaleDateString(locale, { day: 'numeric', month: 'short' }), color: 'text-gray-500 bg-gray-800' }
 }
 
 const HOME_VIEW_ID     = '__home__'
@@ -48,6 +55,11 @@ const ARCHIVE_VIEW_ID  = '__archive__'
 
 export default function AppPage() {
   const router = useRouter()
+  const tr = useTranslations('reminders')
+  const trCommon = useTranslations('common')
+  const trNav = useTranslations('nav')
+  const locale = useLocale()
+  const intlLocale = toIntlLocale(locale as Locale)
   const [username, setUsername] = useState('')
   const [userId, setUserId]     = useState('')
   const [sections, setSections] = useState<Section[]>([])
@@ -305,8 +317,8 @@ export default function AppPage() {
         subtasks.filter(s => s.taskId === t.id).some(s => s.title.toLowerCase().includes(searchQuery.toLowerCase())))
     : []
 
-  const activeSectionName = isPriorityView ? '⭐ По важности'
-    : isArchiveView ? '📦 Архив'
+  const activeSectionName = isPriorityView ? `⭐ ${tr('byImportance')}`
+    : isArchiveView ? `📦 ${tr('archive')}`
     : sections.find(s => s.id === activeSection)?.name ?? ''
 
   function taskProgress(taskId: string) {
@@ -325,7 +337,7 @@ export default function AppPage() {
     <div className="flex items-center justify-center min-h-screen">
       <div className="flex flex-col items-center gap-3">
         <div className="w-8 h-8 border-2 border-accent-500 border-t-transparent rounded-full animate-spin" />
-        <p className="text-gray-600 text-sm">Загрузка...</p>
+        <p className="text-gray-600 text-sm">{tr('loading')}</p>
       </div>
     </div>
   )
@@ -339,7 +351,7 @@ export default function AppPage() {
     const taskComments = comments.filter(c => c.taskId === task.id)
     const pct = total > 0 ? Math.round((done / total) * 100) : 0
     const isDone = DONE_STATES.includes(task.state)
-    const due = dueDateLabel(task.dueDate)
+    const due = dueDateLabel(task.dueDate, tr, intlLocale)
     const sectionName = isPriorityView ? sections.find(s => s.id === task.sectionId)?.name : null
 
     return (
@@ -394,14 +406,14 @@ export default function AppPage() {
               <button onClick={() => setPriorityMenuTaskId(priorityMenuTaskId === task.id ? null : task.id)}
                 className={`text-xs font-medium px-2.5 py-1 rounded-full flex items-center gap-1.5 transition ${PRIORITY_META[task.priority].color}`}>
                 {task.priority !== 'None' && <span className={`w-1.5 h-1.5 rounded-full ${PRIORITY_META[task.priority].dot}`} />}
-                {task.priority === 'None' ? '+ Важность' : task.priority}
+                {task.priority === 'None' ? tr('addPriorityBtn') : task.priority}
               </button>
               {priorityMenuTaskId === task.id && (
                 <div className="absolute left-0 top-9 z-50 bg-gray-900 border border-gray-700/80 rounded-2xl shadow-2xl p-1.5 min-w-[170px]">
                   {PRIORITIES.map(p => (
                     <button key={p} onClick={() => updateTask(task.id, { priority: p })}
                       className={`w-full text-left text-sm px-3 py-2.5 rounded-xl flex items-center gap-2.5 transition ${p === task.priority ? 'opacity-40' : 'hover:bg-gray-800'}`}>
-                      <span className={`w-2 h-2 rounded-full ${PRIORITY_META[p].dot}`} /> {PRIORITY_META[p].label}
+                      <span className={`w-2 h-2 rounded-full ${PRIORITY_META[p].dot}`} /> {priorityLabel(p, tr)}
                     </button>
                   ))}
                 </div>
@@ -411,7 +423,7 @@ export default function AppPage() {
             {/* Due date */}
             {due ? (
               <button onClick={() => updateTask(task.id, { dueDate: '' })}
-                className={`text-xs px-2.5 py-1 rounded-full font-medium ${due.color}`} title="Нажми чтобы убрать">
+                className={`text-xs px-2.5 py-1 rounded-full font-medium ${due.color}`} title={tr('removeDateHint')}>
                 📅 {due.text}
               </button>
             ) : (
@@ -420,7 +432,7 @@ export default function AppPage() {
                   onClick={() => (document.getElementById(`date-${task.id}`) as HTMLInputElement)?.showPicker?.()}
                   className="text-xs px-2.5 py-1 rounded-full text-gray-700 hover:text-gray-500 cursor-pointer transition"
                 >
-                  + Дедлайн
+                  {tr('addDeadlineBtn')}
                 </button>
                 <input
                   id={`date-${task.id}`}
@@ -472,7 +484,7 @@ export default function AppPage() {
                             ? `${PRIORITY_META[sub.priority].color} border`
                             : 'text-gray-700 hover:text-gray-500 hover:bg-gray-800'
                         }`}
-                        title="Важность"
+                        title={tr('priorityTitle')}
                       >
                         {sub.priority !== 'None'
                           ? <span className={`w-2 h-2 rounded-full ${PRIORITY_META[sub.priority].dot}`} />
@@ -485,7 +497,7 @@ export default function AppPage() {
                             <button key={p} onClick={() => patchSubtask(sub.id, { priority: p })}
                               className={`w-full text-left text-xs px-3 py-2 rounded-lg flex items-center gap-2 transition ${p === sub.priority ? 'opacity-40' : 'hover:bg-gray-800'}`}>
                               <span className={`w-2 h-2 rounded-full shrink-0 ${PRIORITY_META[p].dot}`} />
-                              {PRIORITY_META[p].label}
+                              {priorityLabel(p, tr)}
                             </button>
                           ))}
                         </div>
@@ -513,7 +525,7 @@ export default function AppPage() {
                         ? <textarea autoFocus defaultValue={sub.note}
                             onBlur={e => { patchSubtask(sub.id, { note: e.target.value }); setEditingNoteFor(null) }}
                             onKeyDown={e => { if (e.key === 'Escape') setEditingNoteFor(null) }}
-                            placeholder="Комментарий к выполнению..." rows={2}
+                            placeholder={tr('notePlaceholder')} rows={2}
                             className="w-full bg-gray-800/80 border border-gray-700/50 rounded-xl px-3 py-2 text-sm outline-none focus:border-accent-500/50 resize-none placeholder-gray-600" />
                         : <p onClick={() => setEditingNoteFor(sub.id)}
                             className="text-sm text-gray-600 italic cursor-pointer hover:text-gray-400 bg-gray-800/40 rounded-xl px-3 py-2">
@@ -530,22 +542,22 @@ export default function AppPage() {
                   <input ref={newSubtaskRef} autoFocus
                     onKeyDown={e => { if (e.key === 'Enter') addSubtask(task.id); if (e.key === 'Escape') setAddingSubtaskFor(null) }}
                     onBlur={() => addSubtask(task.id)}
-                    placeholder="Название подзадачи..."
+                    placeholder={tr('subtaskPlaceholder')}
                     className="flex-1 bg-transparent outline-none text-sm text-gray-200 placeholder-gray-700" />
                 </div>
               ) : (
                 <button onClick={() => setAddingSubtaskFor(task.id)}
                   className="w-full flex items-center gap-3 py-2.5 text-sm text-gray-700 hover:text-gray-500 transition">
                   <div className="w-6 h-6 rounded-lg border-2 border-dashed border-gray-800 shrink-0 flex items-center justify-center text-xs">+</div>
-                  Добавить подзадачу
+                  {tr('addSubtaskBtn')}
                 </button>
               )}
             </div>
 
             {/* Comments */}
             <div className="border-t border-gray-800/80 px-4 py-3">
-              <p className="text-xs text-gray-600 uppercase tracking-wider mb-2">Комментарии</p>
-              {loadingComments === task.id && <p className="text-xs text-gray-700 mb-2">Загрузка...</p>}
+              <p className="text-xs text-gray-600 uppercase tracking-wider mb-2">{tr('commentsTitle')}</p>
+              {loadingComments === task.id && <p className="text-xs text-gray-700 mb-2">{tr('loading')}</p>}
               {taskComments.map(c => (
                 <div key={c.id} className="group flex gap-2.5 mb-2.5">
                   <div className="w-6 h-6 rounded-full bg-accent-600/30 flex items-center justify-center shrink-0 text-xs font-medium text-accent-300 mt-0.5">
@@ -555,7 +567,7 @@ export default function AppPage() {
                     <div className="flex items-center justify-between gap-2 mb-1">
                       <span className="text-xs font-medium text-gray-400">{c.username}</span>
                       <div className="flex items-center gap-1">
-                        <span className="text-xs text-gray-700">{new Date(c.createdAt).toLocaleDateString('ru', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                        <span className="text-xs text-gray-700">{new Date(c.createdAt).toLocaleDateString(intlLocale, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
                         {c.userId === userId && (
                           <button onClick={() => removeComment(c.id)} className="opacity-0 group-hover:opacity-100 text-gray-700 hover:text-red-400 transition ml-1">
                             <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
@@ -568,7 +580,7 @@ export default function AppPage() {
                 </div>
               ))}
               <div className="flex gap-2 mt-2">
-                <input ref={commentRef} placeholder="Написать комментарий..."
+                <input ref={commentRef} placeholder={tr('commentPlaceholder')}
                   onKeyDown={e => { if (e.key === 'Enter') addComment(task.id) }}
                   className="flex-1 bg-gray-800/60 border border-gray-700/50 rounded-xl px-3 py-2 text-sm outline-none focus:border-accent-500/50 placeholder-gray-700" />
                 <button onClick={() => addComment(task.id)} className="bg-accent-600 hover:bg-accent-500 text-[#120a00] font-semibold px-3 rounded-xl transition text-sm">
@@ -591,9 +603,9 @@ export default function AppPage() {
         <div className="flex items-center justify-between mb-0.5">
           <div className="flex items-center gap-2">
             <img src="/icon-192.png" alt="Pen" className="w-6 h-6 rounded-[6px]" />
-            <span className="font-bold text-sm tracking-wide">Напоминания</span>
+            <span className="font-bold text-sm tracking-wide">{trNav('reminders')}</span>
           </div>
-          <button onClick={logout} className="text-gray-600 hover:text-gray-400 text-xs transition px-1 py-0.5 rounded">Выйти</button>
+          <button onClick={logout} className="text-gray-600 hover:text-gray-400 text-xs transition px-1 py-0.5 rounded">{tr('logout')}</button>
         </div>
         {username && <p className="text-xs text-accent-400/70">@{username}</p>}
       </div>
@@ -601,8 +613,8 @@ export default function AppPage() {
       <nav className="flex-1 overflow-y-auto p-2 space-y-0.5">
         {/* Special views */}
         {[
-          { id: HOME_VIEW_ID,     icon: '🏠', label: 'Главная' },
-          { id: PRIORITY_VIEW_ID, icon: '⭐', label: 'По важности' },
+          { id: HOME_VIEW_ID,     icon: '🏠', label: tr('home') },
+          { id: PRIORITY_VIEW_ID, icon: '⭐', label: tr('byImportance') },
         ].map(v => (
           <div key={v.id}
             className={`flex items-center gap-2.5 rounded-xl px-3 py-2.5 cursor-pointer text-sm transition ${activeSection === v.id ? 'bg-accent-600 text-[#120a00]' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'}`}
@@ -612,7 +624,7 @@ export default function AppPage() {
           </div>
         ))}
 
-        <p className="text-xs text-gray-600 px-3 py-1.5 uppercase tracking-wider mt-1">Разделы</p>
+        <p className="text-xs text-gray-600 px-3 py-1.5 uppercase tracking-wider mt-1">{tr('sectionsLabel')}</p>
 
         {/* Search */}
         <div className="px-1 pb-1">
@@ -622,13 +634,13 @@ export default function AppPage() {
               <input ref={searchRef} autoFocus value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
                 onBlur={() => { if (!searchQuery) setShowSearch(false) }}
                 onKeyDown={e => { if (e.key === 'Escape') { setShowSearch(false); setSearchQuery('') } }}
-                placeholder="Поиск задач..." className="flex-1 bg-transparent outline-none text-sm placeholder-gray-600" />
+                placeholder={tr('searchPlaceholder')} className="flex-1 bg-transparent outline-none text-sm placeholder-gray-600" />
             </div>
           ) : (
             <button onClick={() => setShowSearch(true)}
               className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:text-gray-400 rounded-xl hover:bg-gray-800/50 transition">
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-              Поиск
+              {tr('searchBtn')}
             </button>
           )}
         </div>
@@ -637,7 +649,7 @@ export default function AppPage() {
         {searchQuery.trim().length > 1 && (
           <div className="px-1 pb-2">
             {searchResults.length === 0
-              ? <p className="text-xs text-gray-600 px-2 py-1">Ничего не найдено</p>
+              ? <p className="text-xs text-gray-600 px-2 py-1">{tr('nothingFoundShort')}</p>
               : searchResults.map(t => (
                   <button key={t.id} onClick={() => {
                     const sec = sections.find(s => s.id === t.sectionId)
@@ -670,13 +682,13 @@ export default function AppPage() {
                   {count > 0 && <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${isActive ? 'bg-white/20' : 'bg-gray-700 text-gray-400'}`}>{count}</span>}
                   {!isSharedSection && (
                     <button onClick={e => { e.stopPropagation(); setShareMenuId(shareMenuId === s.id ? null : s.id) }}
-                      className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-accent-400 transition w-5 h-5 flex items-center justify-center rounded text-xs" title="Поделиться">
+                      className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-accent-400 transition w-5 h-5 flex items-center justify-center rounded text-xs" title={tr('shareTitle')}>
                       🔗
                     </button>
                   )}
                   {!isSharedSection && (
                     <button onClick={e => { e.stopPropagation(); toggleArchiveSection(s.id, true) }}
-                      className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-yellow-400 transition w-5 h-5 flex items-center justify-center rounded text-xs" title="В архив">📦</button>
+                      className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-yellow-400 transition w-5 h-5 flex items-center justify-center rounded text-xs" title={tr('archiveActionTitle')}>📦</button>
                   )}
                   <button onClick={e => { e.stopPropagation(); isSharedSection ? leaveSection(s.id) : removeSection(s.id) }}
                     className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 transition w-5 h-5 flex items-center justify-center rounded">×</button>
@@ -686,16 +698,16 @@ export default function AppPage() {
               {/* Share popup */}
               {shareMenuId === s.id && (
                 <div className="mx-1 mb-1 bg-gray-800 border border-gray-700 rounded-xl p-3 text-xs">
-                  <p className="text-gray-400 mb-2 font-medium">Ссылка-приглашение</p>
+                  <p className="text-gray-400 mb-2 font-medium">{tr('shareLinkTitle')}</p>
                   <div className="flex gap-2">
                     <input readOnly value={`${typeof window !== 'undefined' ? window.location.origin : ''}/join/${s.shareCode}`}
                       className="flex-1 bg-gray-900 rounded-lg px-2 py-1.5 text-gray-300 outline-none text-xs min-w-0" />
                     <button onClick={() => { copyShareLink(s); setShareMenuId(null) }}
                       className="bg-accent-600 hover:bg-accent-500 text-[#120a00] font-semibold px-2.5 py-1.5 rounded-lg transition whitespace-nowrap">
-                      {copied ? '✓' : 'Копировать'}
+                      {copied ? '✓' : tr('copyBtn')}
                     </button>
                   </div>
-                  <p className="text-gray-600 mt-1.5">Отправь эту ссылку — человек войдёт в раздел</p>
+                  <p className="text-gray-600 mt-1.5">{tr('shareLinkHint')}</p>
                 </div>
               )}
             </div>
@@ -707,13 +719,13 @@ export default function AppPage() {
             <input ref={newSectionRef} autoFocus
               onKeyDown={e => { if (e.key === 'Enter') addSection(); if (e.key === 'Escape') setAddingSection(false) }}
               onBlur={() => addSection()}
-              placeholder="Название раздела..."
+              placeholder={tr('sectionNamePlaceholder')}
               className="w-full bg-gray-800 border border-accent-500/50 rounded-xl px-3 py-2.5 text-sm outline-none placeholder-gray-600" />
           </div>
         ) : (
           <button onClick={() => setAddingSection(true)}
             className="w-full text-left px-3 py-2.5 text-sm text-gray-600 hover:text-gray-400 rounded-xl hover:bg-gray-800/50 transition flex items-center gap-2">
-            <span className="text-lg leading-none">+</span> Новый раздел
+            <span className="text-lg leading-none">+</span> {tr('newSection')}
           </button>
         )}
 
@@ -722,7 +734,7 @@ export default function AppPage() {
           <>
             <button onClick={() => setShowArchive(v => !v)}
               className="w-full text-left px-3 py-2 text-xs text-gray-600 hover:text-gray-400 rounded-xl transition flex items-center gap-2 mt-1">
-              <span>📦</span> Архив ({archivedSections.length})
+              <span>📦</span> {tr('archiveCount', { count: archivedSections.length })}
               <span className="ml-auto">{showArchive ? '▲' : '▼'}</span>
             </button>
             {showArchive && archivedSections.map(s => (
@@ -731,7 +743,7 @@ export default function AppPage() {
                 <span className="truncate flex-1 italic">{s.name}</span>
                 <button onClick={e => { e.stopPropagation(); toggleArchiveSection(s.id, false) }}
                   className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-green-400 transition text-xs px-1.5 rounded">
-                  Восстановить
+                  {tr('restoreBtn')}
                 </button>
               </div>
             ))}
@@ -755,8 +767,8 @@ export default function AppPage() {
           {sectionTotal > 0 && (
             <p className="text-xs text-gray-600">
               {sectionDone === sectionTotal
-                ? <span className="text-green-500">Всё выполнено ✓</span>
-                : <>{sectionDone}/{sectionTotal} завершено</>}
+                ? <span className="text-green-500">{tr('allDoneCheck')}</span>
+                : <>{tr('doneOfTotal', { done: sectionDone, total: sectionTotal })}</>}
             </p>
           )}
         </div>
@@ -765,12 +777,12 @@ export default function AppPage() {
           <div className="relative">
             <button onClick={() => setSortMenuOpen(v => !v)}
               className={`text-xs px-2.5 py-1.5 rounded-full border transition ${sortMode !== 'default' ? 'border-accent-500/40 text-accent-400 bg-accent-500/10' : 'border-gray-800 text-gray-600 hover:text-gray-400'}`}
-              title="Сортировка">
+              title={tr('sortTitle')}>
               ↕
             </button>
             {sortMenuOpen && (
               <div className="absolute right-0 top-9 z-50 bg-gray-900 border border-gray-700 rounded-xl shadow-xl p-1 min-w-[160px]">
-                {([['default','По умолчанию'],['priority','По важности'],['deadline','По дедлайну'],['created','По дате']] as [SortMode,string][]).map(([mode, label]) => (
+                {([['default',tr('sortDefault')],['priority',tr('byImportance')],['deadline',tr('sortDeadline')],['created',tr('sortCreated')]] as [SortMode,string][]).map(([mode, label]) => (
                   <button key={mode} onClick={() => { setSortMode(mode); setSortMenuOpen(false) }}
                     className={`w-full text-left text-sm px-3 py-2 rounded-lg transition ${sortMode === mode ? 'text-accent-400 bg-accent-500/10' : 'text-gray-300 hover:bg-gray-800'}`}>
                     {label}
@@ -785,7 +797,7 @@ export default function AppPage() {
               className={`text-xs px-3 py-1.5 rounded-full transition whitespace-nowrap ${
                 showDone ? 'bg-accent-600/20 text-accent-400 border border-accent-500/30' : 'text-gray-600 border border-gray-800 hover:border-gray-700 hover:text-gray-400'
               }`}>
-              {showDone ? 'Скрыть' : hiddenCount > 0 ? `+${hiddenCount}` : 'Готово'}
+              {showDone ? tr('hideBtn') : hiddenCount > 0 ? `+${hiddenCount}` : tr('doneBtn')}
             </button>
           )}
         </div>
@@ -800,10 +812,10 @@ export default function AppPage() {
               </svg>
             </div>
             <p className="text-gray-500 text-sm font-medium">
-              {isPriorityView ? 'Нет задач с приоритетом' : 'Нет задач'}
+              {isPriorityView ? tr('noTasksPriority') : tr('noTasks')}
             </p>
             <p className="text-gray-700 text-xs mt-1">
-              {isPriorityView ? 'Установите важность на задачах' : 'Нажмите «+ Добавить этап» чтобы начать'}
+              {isPriorityView ? tr('setPriorityHint') : tr('addStageHint')}
             </p>
           </div>
         )}
@@ -816,14 +828,14 @@ export default function AppPage() {
               <input ref={newTaskRef} autoFocus
                 onKeyDown={e => { if (e.key === 'Enter') addTask(); if (e.key === 'Escape') setAddingTask(false) }}
                 onBlur={() => addTask()}
-                placeholder="Название этапа..."
+                placeholder={tr('stageNamePlaceholder')}
                 className="w-full bg-transparent outline-none text-base text-gray-100 placeholder-gray-700" />
             </div>
           ) : (
             <button onClick={() => setAddingTask(true)}
               className="w-full flex items-center gap-3 px-4 py-3.5 text-sm text-gray-700 hover:text-gray-500 rounded-2xl border border-dashed border-gray-800/80 hover:border-gray-700 transition group">
               <div className="w-6 h-6 rounded-lg border-2 border-dashed border-gray-800 group-hover:border-gray-700 shrink-0 flex items-center justify-center transition text-sm">+</div>
-              Добавить этап
+              {tr('addStageBtn')}
             </button>
           )
         )}
@@ -851,9 +863,9 @@ export default function AppPage() {
               </button>
               <img src="/icon-192.png" alt="Pen" className="hidden md:block w-7 h-7 rounded-[8px]" />
               <div>
-                <h1 className="font-semibold text-base">Главная</h1>
+                <h1 className="font-semibold text-base">{tr('home')}</h1>
                 <p className="text-xs text-gray-600">
-                  {new Date().toLocaleDateString('ru', { weekday: 'long', day: 'numeric', month: 'long' })}
+                  {new Date().toLocaleDateString(intlLocale, { weekday: 'long', day: 'numeric', month: 'long' })}
                 </p>
               </div>
             </div>
@@ -880,12 +892,12 @@ export default function AppPage() {
               </svg>
             </div>
             <div>
-              <p className="text-gray-400 font-medium">Нет разделов</p>
-              <p className="text-gray-700 text-sm mt-1">Создайте первый раздел чтобы начать</p>
+              <p className="text-gray-400 font-medium">{tr('noSectionsTitle')}</p>
+              <p className="text-gray-700 text-sm mt-1">{tr('noSectionsHint')}</p>
             </div>
             <button onClick={() => { setSidebarOpen(true); setTimeout(() => setAddingSection(true), 100) }}
               className="bg-accent-600 hover:bg-accent-500 text-[#120a00] font-semibold text-sm px-5 py-2.5 rounded-xl transition font-medium">
-              + Создать раздел
+              {tr('createSectionBtn')}
             </button>
           </div>
         )}
@@ -911,11 +923,11 @@ export default function AppPage() {
         <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
           onClick={e => { if (e.target === e.currentTarget) setQuickAddOpen(false) }}>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-5 w-full max-w-md shadow-2xl">
-            <h2 className="font-semibold mb-4">Быстрое добавление</h2>
+            <h2 className="font-semibold mb-4">{tr('quickAddTitle')}</h2>
             <input
               ref={quickAddRef}
               autoFocus
-              placeholder="Название задачи..."
+              placeholder={tr('taskNamePlaceholder')}
               onKeyDown={e => { if (e.key === 'Enter') quickAdd(); if (e.key === 'Escape') setQuickAddOpen(false) }}
               className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-sm outline-none focus:border-accent-500 mb-3"
             />
@@ -930,11 +942,11 @@ export default function AppPage() {
             <div className="flex gap-2">
               <button onClick={quickAdd}
                 className="flex-1 bg-accent-600 hover:bg-accent-500 text-[#120a00] font-semibold rounded-xl py-3 text-sm font-medium transition">
-                Добавить
+                {trCommon('add')}
               </button>
               <button onClick={() => setQuickAddOpen(false)}
                 className="px-4 bg-gray-800 hover:bg-gray-700 rounded-xl text-sm transition">
-                Отмена
+                {trCommon('cancel')}
               </button>
             </div>
           </div>

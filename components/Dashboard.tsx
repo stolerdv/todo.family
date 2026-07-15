@@ -1,9 +1,12 @@
 'use client'
 
 import { useState } from 'react'
+import { useTranslations, useLocale } from 'next-intl'
 import type { Task, Section, Subtask, CalEvent, RepeatRule } from '@/lib/db'
 import { eventOccursOn } from '@/lib/events'
 import { buildIcs, downloadIcs } from '@/lib/ics'
+import { toIntlLocale } from '@/lib/intlLocale'
+import type { Locale } from '@/i18n/routing'
 
 type EventDraft = { day: string; time: string; endTime: string; title: string; note: string; repeat: RepeatRule }
 
@@ -36,6 +39,10 @@ interface Props {
 }
 
 export default function Dashboard({ tasks, sections, subtasks, events, onTaskClick, onAddEvent, onDeleteEvent, onEditEvent }: Props) {
+  const tr = useTranslations('dashboard')
+  const trCommon = useTranslations('common')
+  const locale = useLocale()
+  const intlLocale = toIntlLocale(locale as Locale)
   const [currentDate, setCurrentDate] = useState(new Date())
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
   const [sheetDay, setSheetDay] = useState<string | null>(null) // открытая шторка добавления события
@@ -100,9 +107,9 @@ export default function Dashboard({ tasks, sections, subtasks, events, onTaskCli
                   task.dueDate < todayStr ? 'text-red-400 bg-red-500/10' :
                   task.dueDate === todayStr ? 'text-orange-400 bg-orange-500/10' : 'text-gray-500'
                 }`}>
-                  {task.dueDate === todayStr ? 'сегодня' :
-                   task.dueDate < todayStr ? `просрочено ${Math.round((today.getTime() - new Date(task.dueDate).getTime()) / 86400000)}д` :
-                   new Date(task.dueDate).toLocaleDateString('ru', { day: 'numeric', month: 'short' })}
+                  {task.dueDate === todayStr ? tr('todayLower') :
+                   task.dueDate < todayStr ? tr('overdueDays', { days: Math.round((today.getTime() - new Date(task.dueDate).getTime()) / 86400000) }) :
+                   new Date(task.dueDate).toLocaleDateString(intlLocale, { day: 'numeric', month: 'short' })}
                 </span>
               )}
               {total > 0 && (
@@ -115,8 +122,8 @@ export default function Dashboard({ tasks, sections, subtasks, events, onTaskCli
     )
   }
 
-  const monthNames = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь']
-  const dayNames = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']
+  const dayNames = [0, 1, 2, 3, 4, 5, 6].map(i => tr(`weekdayShort.${i}`))
+  const monthYearLabel = currentDate.toLocaleDateString(intlLocale, { month: 'long', year: 'numeric' })
 
   // Stats
   const totalActive  = activeTasks.length
@@ -129,10 +136,10 @@ export default function Dashboard({ tasks, sections, subtasks, events, onTaskCli
       {/* Stats row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: 'Активных задач', value: totalActive,    color: 'text-accent-400', bg: 'bg-accent-500/10 border-accent-500/20' },
-          { label: 'Просрочено',     value: overdueCount,   color: overdueCount > 0 ? 'text-red-400' : 'text-gray-400', bg: overdueCount > 0 ? 'bg-red-500/10 border-red-500/20' : 'bg-gray-800/40 border-gray-700/40' },
-          { label: 'Сдать сегодня',  value: dueToday.length, color: dueToday.length > 0 ? 'text-orange-400' : 'text-gray-400', bg: dueToday.length > 0 ? 'bg-orange-500/10 border-orange-500/20' : 'bg-gray-800/40 border-gray-700/40' },
-          { label: 'Критичных',      value: criticalCount,  color: criticalCount > 0 ? 'text-red-400' : 'text-gray-400', bg: criticalCount > 0 ? 'bg-red-500/10 border-red-500/20' : 'bg-gray-800/40 border-gray-700/40' },
+          { label: tr('activeTasksStat'), value: totalActive,    color: 'text-accent-400', bg: 'bg-accent-500/10 border-accent-500/20' },
+          { label: tr('overdueStat'),     value: overdueCount,   color: overdueCount > 0 ? 'text-red-400' : 'text-gray-400', bg: overdueCount > 0 ? 'bg-red-500/10 border-red-500/20' : 'bg-gray-800/40 border-gray-700/40' },
+          { label: tr('dueTodayStat'),  value: dueToday.length, color: dueToday.length > 0 ? 'text-orange-400' : 'text-gray-400', bg: dueToday.length > 0 ? 'bg-orange-500/10 border-orange-500/20' : 'bg-gray-800/40 border-gray-700/40' },
+          { label: tr('criticalStat'),      value: criticalCount,  color: criticalCount > 0 ? 'text-red-400' : 'text-gray-400', bg: criticalCount > 0 ? 'bg-red-500/10 border-red-500/20' : 'bg-gray-800/40 border-gray-700/40' },
         ].map(s => (
           <div key={s.label} className={`rounded-2xl border p-4 ${s.bg}`}>
             <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
@@ -146,7 +153,7 @@ export default function Dashboard({ tasks, sections, subtasks, events, onTaskCli
         <div className="bg-gray-900/60 border border-gray-800/80 rounded-2xl p-4">
           <div className="flex items-center justify-between mb-4">
             <button onClick={() => setCurrentDate(new Date(year, month - 1, 1))} className="w-8 h-8 flex items-center justify-center rounded-xl text-gray-500 hover:text-gray-300 hover:bg-gray-800 transition">‹</button>
-            <h2 className="text-sm font-semibold">{monthNames[month]} {year}</h2>
+            <h2 className="text-sm font-semibold capitalize">{monthYearLabel}</h2>
             <button onClick={() => setCurrentDate(new Date(year, month + 1, 1))} className="w-8 h-8 flex items-center justify-center rounded-xl text-gray-500 hover:text-gray-300 hover:bg-gray-800 transition">›</button>
           </div>
 
@@ -194,26 +201,26 @@ export default function Dashboard({ tasks, sections, subtasks, events, onTaskCli
           {selectedDay && (
             <div className="mt-4 border-t border-gray-800/80 pt-3">
               <p className="text-xs text-gray-500 mb-2 capitalize">
-                {new Date(selectedDay + 'T12:00').toLocaleDateString('ru', { weekday: 'long', day: 'numeric', month: 'long' })}
+                {new Date(selectedDay + 'T12:00').toLocaleDateString(intlLocale, { weekday: 'long', day: 'numeric', month: 'long' })}
               </p>
               <div className="space-y-1.5 max-h-56 overflow-y-auto mb-3">
-                {selectedDayEvents.length === 0 && <p className="text-sm text-gray-600 py-1">Свободно — событий нет.</p>}
+                {selectedDayEvents.length === 0 && <p className="text-sm text-gray-600 py-1">{tr('freeNoEvents')}</p>}
                 {selectedDayEvents.map(ev => (
                   <div key={ev.id} className="group flex items-center gap-2.5 bg-white/[0.03] border border-white/[0.07] rounded-xl px-3 py-2.5 transition hover:border-white/[0.14]">
                     <button onClick={() => setEditingEvent(ev)} className="flex-1 min-w-0 flex items-center gap-2.5 text-left">
-                      <span className="text-xs font-bold text-accent-400 tabular-nums w-11 shrink-0">{ev.time || 'весь день'}</span>
+                      <span className="text-xs font-bold text-accent-400 tabular-nums w-11 shrink-0">{ev.time || tr('allDayLower')}</span>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm text-gray-200 truncate">{ev.title}</p>
-                        {(ev.endTime || ev.note) && <p className="text-xs text-gray-500 truncate">{ev.endTime ? `до ${ev.endTime}` : ''}{ev.endTime && ev.note ? ' · ' : ''}{ev.note}</p>}
+                        {(ev.endTime || ev.note) && <p className="text-xs text-gray-500 truncate">{ev.endTime ? tr('untilTime', { time: ev.endTime }) : ''}{ev.endTime && ev.note ? ' · ' : ''}{ev.note}</p>}
                       </div>
                     </button>
-                    <button onClick={() => onDeleteEvent(ev.id)} className="text-gray-600 hover:text-red-400 text-sm px-1 transition shrink-0" aria-label="Удалить">✕</button>
+                    <button onClick={() => onDeleteEvent(ev.id)} className="text-gray-600 hover:text-red-400 text-sm px-1 transition shrink-0" aria-label={trCommon('delete')}>✕</button>
                   </div>
                 ))}
               </div>
               <button onClick={() => setSheetDay(selectedDay)}
                 className="w-full bg-accent-600 hover:bg-accent-500 text-[#120a00] font-semibold text-sm py-2.5 rounded-xl transition active:scale-[.98]">
-                + Добавить событие
+                {tr('addEventBtn')}
               </button>
             </div>
           )}
@@ -223,17 +230,17 @@ export default function Dashboard({ tasks, sections, subtasks, events, onTaskCli
         <div className="space-y-4">
           {overdue.length > 0 && (
             <div>
-              <p className="text-xs text-red-400 uppercase tracking-wider mb-2 font-medium">🔴 Просрочено ({overdue.length})</p>
+              <p className="text-xs text-red-400 uppercase tracking-wider mb-2 font-medium">🔴 {tr('overdueSection')} ({overdue.length})</p>
               <div className="space-y-1.5">
                 {overdue.slice(0, 4).map(t => <TaskPill key={t.id} task={t} showDate />)}
-                {overdue.length > 4 && <p className="text-xs text-gray-600 pl-2">и ещё {overdue.length - 4}...</p>}
+                {overdue.length > 4 && <p className="text-xs text-gray-600 pl-2">{tr('andMore', { count: overdue.length - 4 })}</p>}
               </div>
             </div>
           )}
 
           {dueToday.length > 0 && (
             <div>
-              <p className="text-xs text-orange-400 uppercase tracking-wider mb-2 font-medium">🟠 Сегодня ({dueToday.length})</p>
+              <p className="text-xs text-orange-400 uppercase tracking-wider mb-2 font-medium">🟠 {tr('todaySection')} ({dueToday.length})</p>
               <div className="space-y-1.5">
                 {dueToday.map(t => <TaskPill key={t.id} task={t} />)}
               </div>
@@ -242,7 +249,7 @@ export default function Dashboard({ tasks, sections, subtasks, events, onTaskCli
 
           {upcoming.length > 0 && (
             <div>
-              <p className="text-xs text-gray-500 uppercase tracking-wider mb-2 font-medium">📅 Скоро</p>
+              <p className="text-xs text-gray-500 uppercase tracking-wider mb-2 font-medium">📅 {tr('upcomingSection')}</p>
               <div className="space-y-1.5">
                 {upcoming.slice(0, 5).map(t => <TaskPill key={t.id} task={t} showDate />)}
               </div>
@@ -252,8 +259,8 @@ export default function Dashboard({ tasks, sections, subtasks, events, onTaskCli
           {overdue.length === 0 && dueToday.length === 0 && upcoming.length === 0 && (
             <div className="flex flex-col items-center justify-center py-10 text-center">
               <span className="text-4xl mb-2">📅</span>
-              <p className="text-gray-500 text-sm">Нет задач с дедлайнами</p>
-              <p className="text-gray-700 text-xs mt-1">Установите дедлайны на задачах</p>
+              <p className="text-gray-500 text-sm">{tr('noDeadlinesTitle')}</p>
+              <p className="text-gray-700 text-xs mt-1">{tr('noDeadlinesHint')}</p>
             </div>
           )}
         </div>
@@ -262,7 +269,7 @@ export default function Dashboard({ tasks, sections, subtasks, events, onTaskCli
       {/* Priority board */}
       {prioritized.length > 0 && (
         <div>
-          <p className="text-xs text-gray-500 uppercase tracking-wider mb-3 font-medium">⭐ По важности</p>
+          <p className="text-xs text-gray-500 uppercase tracking-wider mb-3 font-medium">⭐ {tr('byImportance')}</p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
             {prioritized.map(t => <TaskPill key={t.id} task={t} showDate />)}
           </div>
@@ -296,6 +303,10 @@ export default function Dashboard({ tasks, sections, subtasks, events, onTaskCli
 function EventSheet({ day, editing, onClose, onSave, onDelete }: {
   day: string; editing?: CalEvent; onClose: () => void; onSave: (d: EventDraft) => void; onDelete?: () => void
 }) {
+  const tr = useTranslations('dashboard')
+  const trCommon = useTranslations('common')
+  const locale = useLocale()
+  const intlLocale = toIntlLocale(locale as Locale)
   const [title, setTitle] = useState(editing?.title ?? '')
   const [allDay, setAllDay] = useState(editing ? !editing.time : false)
   const [time, setTime] = useState(editing?.time || '12:00')
@@ -304,7 +315,7 @@ function EventSheet({ day, editing, onClose, onSave, onDelete }: {
   const [repeat, setRepeat] = useState<RepeatRule>(editing?.repeat ?? null)
   const [confirmDelete, setConfirmDelete] = useState(false)
 
-  const dayLabel = new Date(day + 'T12:00').toLocaleDateString('ru', { weekday: 'long', day: 'numeric', month: 'long' })
+  const dayLabel = new Date(day + 'T12:00').toLocaleDateString(intlLocale, { weekday: 'long', day: 'numeric', month: 'long' })
   const canSave = title.trim().length > 0
 
   const save = () => {
@@ -312,7 +323,7 @@ function EventSheet({ day, editing, onClose, onSave, onDelete }: {
     onSave({ day, time: allDay ? '' : time, endTime: allDay ? '' : endTime, title: title.trim(), note: note.trim(), repeat })
   }
 
-  const repeatLabel: Record<Exclude<RepeatRule, null>, string> = { daily: 'День', weekly: 'Неделя', monthly: 'Месяц', yearly: 'Год' }
+  const repeatLabel: Record<Exclude<RepeatRule, null>, string> = { daily: tr('repeatDay'), weekly: tr('repeatWeek'), monthly: tr('repeatMonth'), yearly: tr('repeatYear') }
 
   return (
     <div className="fixed inset-0 z-[120] flex items-end md:items-center justify-center">
@@ -320,42 +331,42 @@ function EventSheet({ day, editing, onClose, onSave, onDelete }: {
       <div className="relative w-full max-w-md rounded-t-3xl md:rounded-3xl border border-white/10 p-6 pb-8"
         style={{ background: 'linear-gradient(160deg, #161618, #0b0b0c)', boxShadow: '0 -20px 60px -20px rgba(0,0,0,.8)', animation: 'slideUp .3s cubic-bezier(.2,.9,.3,1)' }}>
         <div className="w-10 h-1 rounded-full bg-white/15 mx-auto mb-5 md:hidden" />
-        <h2 className="text-lg font-bold text-white mb-0.5">{editing ? 'Изменить событие' : 'Новое событие'}</h2>
+        <h2 className="text-lg font-bold text-white mb-0.5">{editing ? tr('editEventTitle') : tr('newEventTitle')}</h2>
         <p className="text-xs text-accent-400/80 capitalize mb-5">{dayLabel}</p>
 
-        <label className="block text-xs font-semibold text-gray-400 mb-1.5">Название</label>
+        <label className="block text-xs font-semibold text-gray-400 mb-1.5">{tr('nameLabel')}</label>
         <input autoFocus value={title} onChange={e => setTitle(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && canSave) save() }}
-          placeholder="Например: Встреча, тренировка, врач…"
+          placeholder={tr('namePlaceholder')}
           className="w-full bg-white/[0.04] border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 outline-none transition focus:border-accent-500 focus:bg-white/[0.06] mb-4" />
 
         <div className="flex items-center justify-between mb-3">
-          <label className="text-xs font-semibold text-gray-400">Время</label>
+          <label className="text-xs font-semibold text-gray-400">{tr('timeLabel')}</label>
           <button type="button" onClick={() => setAllDay(v => !v)}
             className={`text-xs px-3 py-1.5 rounded-full border transition ${allDay ? 'bg-accent-500/20 border-accent-500/40 text-accent-300' : 'border-white/10 text-gray-400'}`}>
-            Весь день
+            {trCommon('allDay')}
           </button>
         </div>
         {!allDay && (
           <div className="flex items-center gap-3 mb-4">
             <div className="flex-1">
-              <span className="block text-[11px] text-gray-500 mb-1">Начало</span>
+              <span className="block text-[11px] text-gray-500 mb-1">{tr('startLabel')}</span>
               <input type="time" value={time} onChange={e => setTime(e.target.value)}
                 className="w-full bg-white/[0.04] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-accent-500 [color-scheme:dark]" />
             </div>
             <div className="flex-1">
-              <span className="block text-[11px] text-gray-500 mb-1">Конец (необязательно)</span>
+              <span className="block text-[11px] text-gray-500 mb-1">{tr('endLabel')}</span>
               <input type="time" value={endTime} onChange={e => setEndTime(e.target.value)}
                 className="w-full bg-white/[0.04] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-accent-500 [color-scheme:dark]" />
             </div>
           </div>
         )}
 
-        <label className="block text-xs font-semibold text-gray-400 mb-1.5">Повторять</label>
+        <label className="block text-xs font-semibold text-gray-400 mb-1.5">{tr('repeatLabel')}</label>
         <div className="flex gap-1.5 mb-4 flex-wrap">
           <button type="button" onClick={() => setRepeat(null)}
             className={`text-xs px-3 py-1.5 rounded-full border transition ${!repeat ? 'bg-accent-500/20 border-accent-500/40 text-accent-300' : 'border-white/10 text-gray-400'}`}>
-            Нет
+            {tr('noRepeat')}
           </button>
           {(['daily', 'weekly', 'monthly', 'yearly'] as const).map(r => (
             <button key={r} type="button" onClick={() => setRepeat(r)}
@@ -366,34 +377,34 @@ function EventSheet({ day, editing, onClose, onSave, onDelete }: {
         </div>
         {repeat && (
           <p className="text-xs text-gray-600 -mt-2 mb-4">
-            Повторяется каждый{repeat === 'daily' ? ' день' : repeat === 'weekly' ? 'ую неделю (по тому же дню недели)' : repeat === 'monthly' ? ' месяц (в это число)' : ' год (в этот день)'}.
-            {editing ? ' Изменения применятся ко всем повторениям.' : ''}
+            {tr(`repeatHint.${repeat}`)}
+            {editing ? tr('repeatHintEditingSuffix') : ''}
           </p>
         )}
 
-        <label className="block text-xs font-semibold text-gray-400 mb-1.5">Заметка (необязательно)</label>
+        <label className="block text-xs font-semibold text-gray-400 mb-1.5">{tr('noteOptionalLabel')}</label>
         <textarea value={note} onChange={e => setNote(e.target.value)} rows={2}
-          placeholder="Место, детали…"
+          placeholder={tr('notePlaceholder')}
           className="w-full bg-white/[0.04] border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 outline-none transition focus:border-accent-500 focus:bg-white/[0.06] resize-none mb-6" />
 
         <div className="flex gap-3">
-          <button onClick={onClose} className="flex-1 border border-white/10 text-gray-300 font-medium py-3 rounded-xl transition hover:bg-white/[0.04]">Отмена</button>
+          <button onClick={onClose} className="flex-1 border border-white/10 text-gray-300 font-medium py-3 rounded-xl transition hover:bg-white/[0.04]">{trCommon('cancel')}</button>
           <button onClick={save} disabled={!canSave}
             className="flex-1 bg-accent-600 hover:bg-accent-500 text-[#120a00] font-bold py-3 rounded-xl transition active:scale-[.98] disabled:opacity-40"
-            style={{ boxShadow: canSave ? '0 10px 30px -8px rgba(255,122,26,.5)' : 'none' }}>Сохранить</button>
+            style={{ boxShadow: canSave ? '0 10px 30px -8px rgba(255,122,26,.5)' : 'none' }}>{trCommon('save')}</button>
         </div>
 
         {editing && (
           <button onClick={() => downloadIcs(`${editing.title}.ics`, buildIcs({ uid: editing.id, title: editing.title, day: editing.day, time: editing.time, endTime: editing.endTime, note: editing.note, repeat: editing.repeat }))}
             className="w-full mt-3 text-sm font-medium py-2.5 rounded-xl transition text-gray-500 hover:text-accent-400">
-            📅 Добавить в календарь телефона
+            📅 {trCommon('addToCalendar')}
           </button>
         )}
 
         {editing && onDelete && (
           <button onClick={() => confirmDelete ? onDelete() : setConfirmDelete(true)}
             className={`w-full mt-1 text-sm font-medium py-2.5 rounded-xl transition ${confirmDelete ? 'bg-red-500/15 text-red-400 border border-red-500/30' : 'text-gray-500 hover:text-red-400'}`}>
-            {confirmDelete ? 'Точно удалить? Нажми ещё раз' : editing.repeat ? 'Удалить все повторения' : 'Удалить событие'}
+            {confirmDelete ? trCommon('confirmDeleteAgain') : editing.repeat ? tr('deleteAllOccurrences') : tr('deleteEventBtn')}
           </button>
         )}
       </div>
