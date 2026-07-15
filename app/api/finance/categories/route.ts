@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCategories, createCategory } from '@/lib/finance'
 import { getUserFromRequest } from '@/lib/getUser'
+import { getLocaleFromCookies } from '@/lib/serverLocale'
 
 export async function GET(req: NextRequest) {
   try {
     const user = await getUserFromRequest()
     const spaceId = req.nextUrl.searchParams.get('spaceId')
     if (!user || !spaceId) return NextResponse.json([])
-    return NextResponse.json(await getCategories(spaceId, user.userId))
+    return NextResponse.json(await getCategories(spaceId, user.userId, getLocaleFromCookies()))
   } catch (e) {
     console.error('GET /api/finance/categories error:', e)
     return NextResponse.json([], { status: 200 })

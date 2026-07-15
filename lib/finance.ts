@@ -1,4 +1,6 @@
 import { neon } from '@neondatabase/serverless'
+import { getTranslations } from 'next-intl/server'
+import type { Locale } from '@/i18n/routing'
 
 export type AccountType = 'cash' | 'card' | 'bank' | 'savings' | 'deposit' | 'other'
 
@@ -464,30 +466,31 @@ export async function deleteTxn(id: string, userId: string): Promise<{ reverts: 
 
 export interface Category { id: string; kind: 'expense' | 'income'; name: string; emoji: string; sortOrder: number }
 
-const DEFAULT_CATEGORIES: { kind: 'expense' | 'income'; name: string; emoji: string }[] = [
-  { kind: 'expense', name: 'Еда', emoji: '🍔' }, { kind: 'expense', name: 'Продукты', emoji: '🛒' },
-  { kind: 'expense', name: 'Транспорт', emoji: '🚗' }, { kind: 'expense', name: 'Дом', emoji: '🏠' },
-  { kind: 'expense', name: 'Кафе', emoji: '☕' }, { kind: 'expense', name: 'Здоровье', emoji: '💊' },
-  { kind: 'expense', name: 'Развлечения', emoji: '🎉' }, { kind: 'expense', name: 'Одежда', emoji: '👕' },
-  { kind: 'expense', name: 'Связь/ЖКХ', emoji: '📱' }, { kind: 'expense', name: 'Подарки', emoji: '🎁' },
-  { kind: 'expense', name: 'Прочее', emoji: '💸' },
-  { kind: 'income', name: 'Зарплата', emoji: '💼' }, { kind: 'income', name: 'Подработка', emoji: '🛠' },
-  { kind: 'income', name: 'Подарок', emoji: '🎁' }, { kind: 'income', name: 'Возврат', emoji: '↩️' },
-  { kind: 'income', name: 'Прочее', emoji: '💰' },
+const DEFAULT_CATEGORIES: { kind: 'expense' | 'income'; key: string; emoji: string }[] = [
+  { kind: 'expense', key: 'food', emoji: '🍔' }, { kind: 'expense', key: 'groceries', emoji: '🛒' },
+  { kind: 'expense', key: 'transport', emoji: '🚗' }, { kind: 'expense', key: 'home', emoji: '🏠' },
+  { kind: 'expense', key: 'cafe', emoji: '☕' }, { kind: 'expense', key: 'health', emoji: '💊' },
+  { kind: 'expense', key: 'fun', emoji: '🎉' }, { kind: 'expense', key: 'clothes', emoji: '👕' },
+  { kind: 'expense', key: 'bills', emoji: '📱' }, { kind: 'expense', key: 'gifts', emoji: '🎁' },
+  { kind: 'expense', key: 'other', emoji: '💸' },
+  { kind: 'income', key: 'salary', emoji: '💼' }, { kind: 'income', key: 'extra', emoji: '🛠' },
+  { kind: 'income', key: 'gift', emoji: '🎁' }, { kind: 'income', key: 'refund', emoji: '↩️' },
+  { kind: 'income', key: 'other_inc', emoji: '💰' },
 ]
 
 function mapCat(r: any): Category {
   return { id: r.id, kind: r.kind, name: r.name, emoji: r.emoji ?? '•', sortOrder: r.sort_order ?? 0 }
 }
 
-export async function getCategories(spaceId: string, userId: string): Promise<Category[]> {
+export async function getCategories(spaceId: string, userId: string, locale: Locale = 'ru'): Promise<Category[]> {
   if (!(await isMember(spaceId, userId))) return []
   let rows = await sql()`SELECT id, kind, name, emoji, sort_order FROM finance_categories WHERE space_id = ${spaceId} ORDER BY kind, sort_order, created_at`
   if (rows.length === 0) {
-    // засеваем стандартный набор при первом обращении к кабинету
+    // засеваем стандартный набор на языке того, кто первым открыл кабинет
+    const tr = await getTranslations({ locale, namespace: 'financeDefaults.categories' })
     const q = sql()
     await q.transaction(DEFAULT_CATEGORIES.map((c, i) =>
-      q`INSERT INTO finance_categories (user_id, space_id, kind, name, emoji, sort_order) VALUES (${userId}, ${spaceId}, ${c.kind}, ${c.name}, ${c.emoji}, ${i})`))
+      q`INSERT INTO finance_categories (user_id, space_id, kind, name, emoji, sort_order) VALUES (${userId}, ${spaceId}, ${c.kind}, ${tr(`${c.kind}.${c.key}`)}, ${c.emoji}, ${i})`))
     rows = await sql()`SELECT id, kind, name, emoji, sort_order FROM finance_categories WHERE space_id = ${spaceId} ORDER BY kind, sort_order, created_at`
   }
   return (rows as any[]).map(mapCat)

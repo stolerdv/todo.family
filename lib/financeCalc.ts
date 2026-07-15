@@ -1,6 +1,8 @@
 import type { Account, DepositRate, FinanceSettings, Txn } from './finance'
 import { Dates } from './trackerStats'
 
+type Translator = (key: string, values?: Record<string, any>) => string
+
 export interface DepositResult {
   value: number       // текущая сумма (тело + начисленные проценты)
   interest: number    // сколько начислено сверх тела
@@ -53,26 +55,26 @@ export function accountValue(acc: Account, today: string): number {
 // decimals не задан → авто: если есть копейки (не целое число) — показываем 2 знака,
 // иначе 0. Раньше всегда округляло до целого и введённые копейки визуально «терялись»
 // (сумма сохранялась верно, но не была видна на экране).
-export function formatMoney(n: number, currency = '', decimals?: number): string {
+export function formatMoney(n: number, currency = '', decimals?: number, locale = 'ru-RU'): string {
   const hasCents = Math.round(n * 100) % 100 !== 0
   const d = decimals !== undefined ? decimals : (hasCents ? 2 : 0)
-  const s = new Intl.NumberFormat('ru-RU', { minimumFractionDigits: d, maximumFractionDigits: d }).format(
+  const s = new Intl.NumberFormat(locale, { minimumFractionDigits: d, maximumFractionDigits: d }).format(
     d ? n : Math.round(n),
   )
   return currency ? `${s} ${currency}` : s
 }
 
-export const ACCOUNT_TYPES: { value: Account['type']; label: string; emoji: string }[] = [
-  { value: 'cash',    label: 'Наличные', emoji: '💵' },
-  { value: 'card',    label: 'Карта',    emoji: '💳' },
-  { value: 'bank',    label: 'Счёт',     emoji: '🏦' },
-  { value: 'savings', label: 'Накопления', emoji: '🐷' },
-  { value: 'deposit', label: 'Депозит',  emoji: '📈' },
-  { value: 'other',   label: 'Другое',   emoji: '💰' },
+export const ACCOUNT_TYPES: { value: Account['type']; emoji: string }[] = [
+  { value: 'cash',    emoji: '💵' },
+  { value: 'card',    emoji: '💳' },
+  { value: 'bank',    emoji: '🏦' },
+  { value: 'savings', emoji: '🐷' },
+  { value: 'deposit', emoji: '📈' },
+  { value: 'other',   emoji: '💰' },
 ]
 
-export function typeLabel(t: Account['type']): string {
-  return ACCOUNT_TYPES.find(x => x.value === t)?.label ?? t
+export function typeLabel(t: Account['type'], tr: Translator): string {
+  return tr(`accountTypes.${t}`)
 }
 
 // ── Валюты: пересчёт в базовую ─────────────────────────────────────────────────
@@ -116,34 +118,38 @@ export function currenciesInUse(accounts: Account[]): string[] {
   return Array.from(new Set(accounts.map(a => a.currency)))
 }
 
-// ── Категории операций ─────────────────────────────────────────────────────────
+// ── Категории операций (легаси-фолбэк для старых операций, у которых category —
+// строковый ключ вроде 'food', а не id из finance_categories) ───────────────────
 export interface Category { key: string; label: string; emoji: string }
 
-export const EXPENSE_CATEGORIES: Category[] = [
-  { key: 'food',      label: 'Еда',         emoji: '🍔' },
-  { key: 'groceries', label: 'Продукты',    emoji: '🛒' },
-  { key: 'transport', label: 'Транспорт',   emoji: '🚗' },
-  { key: 'home',      label: 'Дом',         emoji: '🏠' },
-  { key: 'cafe',      label: 'Кафе',        emoji: '☕' },
-  { key: 'health',    label: 'Здоровье',    emoji: '💊' },
-  { key: 'fun',       label: 'Развлечения', emoji: '🎉' },
-  { key: 'clothes',   label: 'Одежда',      emoji: '👕' },
-  { key: 'bills',     label: 'Связь/ЖКХ',   emoji: '📱' },
-  { key: 'gifts',     label: 'Подарки',     emoji: '🎁' },
-  { key: 'other',     label: 'Прочее',      emoji: '💸' },
+export const EXPENSE_CATEGORIES: { key: string; emoji: string }[] = [
+  { key: 'food',      emoji: '🍔' },
+  { key: 'groceries', emoji: '🛒' },
+  { key: 'transport', emoji: '🚗' },
+  { key: 'home',      emoji: '🏠' },
+  { key: 'cafe',      emoji: '☕' },
+  { key: 'health',    emoji: '💊' },
+  { key: 'fun',       emoji: '🎉' },
+  { key: 'clothes',   emoji: '👕' },
+  { key: 'bills',     emoji: '📱' },
+  { key: 'gifts',     emoji: '🎁' },
+  { key: 'other',     emoji: '💸' },
 ]
 
-export const INCOME_CATEGORIES: Category[] = [
-  { key: 'salary',    label: 'Зарплата',   emoji: '💼' },
-  { key: 'extra',     label: 'Подработка', emoji: '🛠' },
-  { key: 'gift',      label: 'Подарок',    emoji: '🎁' },
-  { key: 'refund',    label: 'Возврат',    emoji: '↩️' },
-  { key: 'other_inc', label: 'Прочее',     emoji: '💰' },
+export const INCOME_CATEGORIES: { key: string; emoji: string }[] = [
+  { key: 'salary',    emoji: '💼' },
+  { key: 'extra',     emoji: '🛠' },
+  { key: 'gift',      emoji: '🎁' },
+  { key: 'refund',    emoji: '↩️' },
+  { key: 'other_inc', emoji: '💰' },
 ]
 
-export function categoryMeta(key: string): Category {
-  return [...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES].find(c => c.key === key)
-    ?? { key, label: key || 'Прочее', emoji: '•' }
+export function categoryMeta(key: string, tr: Translator): Category {
+  const inExpense = EXPENSE_CATEGORIES.find(c => c.key === key)
+  if (inExpense) return { key, emoji: inExpense.emoji, label: tr(`expense.${key}`) }
+  const inIncome = INCOME_CATEGORIES.find(c => c.key === key)
+  if (inIncome) return { key, emoji: inIncome.emoji, label: tr(`income.${key}`) }
+  return { key, label: key || tr('expense.other'), emoji: '•' }
 }
 
 // ── Бюджеты: траты по категории за текущий месяц (в базовой валюте) ──────────────

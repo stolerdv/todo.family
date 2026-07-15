@@ -25,6 +25,6 @@ export function loadMoneyHidden(): void {
   if (typeof localStorage !== 'undefined') hidden = localStorage.getItem('fin_hide_money') === '1'
 }
 
-export function fmt(n: number, currency = '', decimals?: number): string {
-  return hidden ? (currency ? `•••• ${currency}` : '••••') : formatMoneyReal(n, currency, decimals)
+export function fmt(n: number, currency = '', decimals?: number, locale?: string): string {
+  return hidden ? (currency ? `•••• ${currency}` : '••••') : formatMoneyReal(n, currency, decimals, locale)
 }
