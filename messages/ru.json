@@ -155,7 +155,7 @@
     "totalDoneLabel": "✅ Всего",
     "daysUnit": "{count, plural, one {день} few {дня} many {дней} other {дней}}",
     "activityTitle": "Активность",
-    "activityHint": "Последние ~4 месяца. Ярче — выполнено.",
+    "activityHint": "Последние ~4 месяца. Ярче — выполнено. Тапни на день, чтобы отметить его задним числом.",
     "less": "меньше",
     "more": "больше",
     "byWeeksTitle": "По неделям",

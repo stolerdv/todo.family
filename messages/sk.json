@@ -155,7 +155,7 @@
     "totalDoneLabel": "✅ Spolu",
     "daysUnit": "{count, plural, one {deň} few {dni} other {dní}}",
     "activityTitle": "Aktivita",
-    "activityHint": "Posledné ~4 mesiace. Jasnejšie — splnené.",
+    "activityHint": "Posledné ~4 mesiace. Jasnejšie — splnené. Ťuknutím na deň ho označíš spätne.",
     "less": "menej",
     "more": "viac",
     "byWeeksTitle": "Po týždňoch",

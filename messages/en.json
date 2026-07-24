@@ -155,7 +155,7 @@
     "totalDoneLabel": "✅ Total",
     "daysUnit": "{count, plural, one {day} other {days}}",
     "activityTitle": "Activity",
-    "activityHint": "Last ~4 months. Brighter — done.",
+    "activityHint": "Last ~4 months. Brighter — done. Tap a day to mark it retroactively.",
     "less": "less",
     "more": "more",
     "byWeeksTitle": "By week",

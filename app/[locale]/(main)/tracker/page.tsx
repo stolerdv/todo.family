@@ -354,7 +354,11 @@ function DetailView({ habit, hc, today, onBack, onToggle, onEdit, onArchive }: {
             if (c.future || c.beforeStart) bg = 'transparent'
             else if (c.done) bg = ACCENT
             else if (c.scheduled) bg = 'color-mix(in srgb, var(--tk-danger) 22%, var(--tk-card-2))'
-            return <div key={i} className="tk-heat-cell" title={c.key} style={{ background: bg }} />
+            if (c.future || c.beforeStart) return <div key={i} className="tk-heat-cell" style={{ background: bg }} />
+            return (
+              <button key={i} type="button" className="tk-heat-cell tk-heat-cell-tap" title={c.key}
+                onClick={() => onToggle(habit, c.key)} style={{ background: bg }} />
+            )
           })}
         </div>
         <div className="tk-heat-legend">
